@@ -13,24 +13,87 @@ const CLIENT_HTML = `<!DOCTYPE html>
   <title>HaxBall Online</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: 'Segoe UI', system-ui, sans-serif; }
-    body { background: #14181d; color: #f1f5f9; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }
-    .scoreboard-bar { display: flex; align-items: center; justify-content: space-between; width: 840px; background: #1e242b; border: 2px solid #2f3844; border-bottom: none; border-radius: 10px 10px 0 0; padding: 8px 18px; }
+    body { background: #14181d; color: #f1f5f9; height: 100vh; width: 100vw; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }
+    
+    .game-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 840px;
+      max-width: 96vw;
+    }
+
+    :fullscreen .game-wrapper,
+    :-webkit-full-screen .game-wrapper {
+      width: min(94vw, calc((100vh - 90px) * 2));
+      max-width: 1600px;
+    }
+
+    .scoreboard-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      background: #1e242b;
+      border: 2px solid #2f3844;
+      border-bottom: none;
+      border-radius: 10px 10px 0 0;
+      padding: 8px 18px;
+    }
+
     .score-group { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; }
     .badge { width: 20px; height: 20px; border-radius: 4px; border: 2px solid #fff; }
     .badge.red { background: #e56e56; }
     .badge.blue { background: #5689e5; }
     .clock-box { font-family: monospace; font-size: 24px; font-weight: 700; background: #111519; padding: 4px 16px; border-radius: 6px; border: 1px solid #2e3743; }
-    .net-status { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 8px; }
+    
+    .right-controls { display: flex; align-items: center; gap: 14px; }
+    .stamina-hud { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: #cbd5e1; }
+    .stamina-bar-bg { width: 70px; height: 10px; background: #0f141a; border-radius: 99px; border: 1px solid #334155; overflow: hidden; }
+    .stamina-bar-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24); transition: width 0.08s linear; }
+
+    .net-status { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; }
     .dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
-    .stage { position: relative; width: 840px; height: 420px; border: 2px solid #2f3844; border-radius: 0 0 10px 10px; overflow: hidden; box-shadow: 0 18px 45px rgba(0,0,0,0.65); }
-    canvas { display: block; background: #718c5a; }
+
+    .fs-btn {
+      background: #283240;
+      color: #f1f5f9;
+      border: 1px solid #3e4c63;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .fs-btn:hover { background: #364457; }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 2 / 1;
+      border: 2px solid #2f3844;
+      border-radius: 0 0 10px 10px;
+      overflow: hidden;
+      box-shadow: 0 18px 45px rgba(0,0,0,0.65);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #718c5a;
+    }
+
     .goal-banner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity 0.2s; background: radial-gradient(circle, rgba(0,0,0,0.45) 0%, transparent 70%); }
     .goal-banner.active { opacity: 1; }
     .goal-title { font-size: 52px; font-weight: 900; text-shadow: 0 4px 15px #000; }
     .goal-title.red { color: #e56e56; }
     .goal-title.blue { color: #5689e5; }
     .goal-sub { margin-top: 6px; font-size: 15px; font-weight: 600; background: rgba(15,23,42,0.85); padding: 6px 16px; border-radius: 999px; }
+
     .lobby { position: absolute; inset: 0; background: rgba(12,16,22,0.75); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 10; }
     .lobby.hidden { display: none; }
     .card { width: 340px; background: #181e26; border: 1px solid #334155; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
@@ -42,48 +105,80 @@ const CLIENT_HTML = `<!DOCTYPE html>
     .t-btn.active[data-team="red"] { background: #e56e56; border-color: #fff; }
     .t-btn.active[data-team="blue"] { background: #5689e5; border-color: #fff; }
     .join-btn { background: #2ecc71; color: #09130c; font-weight: 800; font-size: 15px; padding: 11px; border: none; border-radius: 8px; cursor: pointer; }
-    .footer { margin-top: 10px; font-size: 12px; color: #94a3b8; }
+    .footer { margin-top: 10px; font-size: 12px; color: #94a3b8; text-align: center; }
+    kbd { background: #262f3d; padding: 2px 6px; border-radius: 4px; border: 1px solid #3e4c63; font-size: 11px; color: #e2e8f0; }
   </style>
 </head>
 <body>
-  <div class="scoreboard-bar">
-    <div class="score-group">
-      <div class="badge red"></div><span id="sRed">0</span><span>-</span><span id="sBlue">0</span><div class="badge blue"></div>
-    </div>
-    <div class="clock-box" id="clock">00:00</div>
-    <div class="net-status"><div class="dot" id="dot"></div><span id="status">Conectando...</span></div>
-  </div>
-  <div class="stage">
-    <canvas id="c" width="840" height="420"></canvas>
-    <div class="goal-banner" id="gBanner">
-      <div class="goal-title" id="gTitle">¡GOL!</div>
-      <div class="goal-sub" id="gSub"></div>
-    </div>
-    <div class="lobby" id="lobby">
-      <form class="card" id="form">
-        <h1>⚽ HaxBall Online</h1>
-        <input type="text" id="nick" class="input" placeholder="Tu nombre..." maxlength="14" required autocomplete="off" />
-        <div class="teams">
-          <button type="button" class="t-btn active" data-team="auto">Auto</button>
-          <button type="button" class="t-btn" data-team="red">Rojo</button>
-          <button type="button" class="t-btn" data-team="blue">Azul</button>
+  <div class="game-wrapper" id="gameWrapper">
+    <div class="scoreboard-bar">
+      <div class="score-group">
+        <div class="badge red"></div><span id="sRed">0</span><span>-</span><span id="sBlue">0</span><div class="badge blue"></div>
+      </div>
+
+      <div class="clock-box" id="clock">00:00</div>
+
+      <div class="right-controls">
+        <div class="stamina-hud" title="Energía de Esprint (Shift)">
+          <span>⚡</span>
+          <div class="stamina-bar-bg"><div class="stamina-bar-fill" id="staminaFill"></div></div>
         </div>
-        <button type="submit" class="join-btn">Entrar a la Cancha</button>
-      </form>
+        <div class="net-status"><div class="dot" id="dot"></div><span id="status">Conectando...</span></div>
+        <button type="button" class="fs-btn" id="fsBtn">⛶ Pantalla Completa</button>
+      </div>
+    </div>
+
+    <div class="stage">
+      <canvas id="c" width="840" height="420"></canvas>
+      <div class="goal-banner" id="gBanner">
+        <div class="goal-title" id="gTitle">¡GOL!</div>
+        <div class="goal-sub" id="gSub"></div>
+      </div>
+      <div class="lobby" id="lobby">
+        <form class="card" id="form">
+          <h1>⚽ HaxBall Online</h1>
+          <input type="text" id="nick" class="input" placeholder="Tu nombre..." maxlength="14" required autocomplete="off" />
+          <div class="teams">
+            <button type="button" class="t-btn active" data-team="auto">Auto</button>
+            <button type="button" class="t-btn" data-team="red">Rojo</button>
+            <button type="button" class="t-btn" data-team="blue">Azul</button>
+          </div>
+          <button type="submit" class="join-btn">Entrar a la Cancha</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="footer">
+      Moverse: <kbd>WASD</kbd> o <kbd>Flechas</kbd> &nbsp;|&nbsp;
+      Esprintar: <kbd>Shift</kbd> &nbsp;|&nbsp;
+      Chutar: <kbd>Espacio</kbd> o <kbd>X</kbd> &nbsp;|&nbsp;
+      Pantalla Completa: <kbd>F</kbd>
     </div>
   </div>
-  <div class="footer">Moverse: WASD o Flechas | Chutar: Espacio o X</div>
 
   <script>
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     let myId = null, team = 'auto', pingMs = 0, lastPingSent = 0;
 
-    // Posiciones suavizadas en el cliente (Predicción + Interpolación)
     const renderBall = { x: 420, y: 210, tx: 420, ty: 210, vx: 0, vy: 0 };
     const renderPlayers = new Map();
     const fx = [];
-    const keys = { up: false, down: false, left: false, right: false, kick: false };
+    const sprintTrails = [];
+    const keys = { up: false, down: false, left: false, right: false, kick: false, sprint: false };
+
+    const fsBtn = document.getElementById('fsBtn');
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+    fsBtn.onclick = () => { toggleFullscreen(); fsBtn.blur(); };
+    document.addEventListener('fullscreenchange', () => {
+      fsBtn.textContent = document.fullscreenElement ? '✕ Salir Pantalla Completa' : '⛶ Pantalla Completa';
+    });
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(proto + '//' + location.host);
@@ -103,36 +198,41 @@ const CLIENT_HTML = `<!DOCTYPE html>
       const m = JSON.parse(e.data);
       if (m.type === 'PONG') {
         pingMs = Math.round(performance.now() - lastPingSent);
-        document.getElementById('status').textContent = 'Ping: ' + pingMs + ' ms';
+        document.getElementById('status').textContent = pingMs + ' ms';
       } else if (m.type === 'JOINED') {
         myId = m.playerId;
         document.getElementById('lobby').classList.add('hidden');
       } else if (m.type === 'STATE') {
-        // Actualizar objetivo del balón
         renderBall.tx = m.b[0]; renderBall.ty = m.b[1];
         renderBall.vx = m.b[2]; renderBall.vy = m.b[3];
         if (Math.hypot(renderBall.tx - renderBall.x, renderBall.ty - renderBall.y) > 80) {
           renderBall.x = renderBall.tx; renderBall.y = renderBall.ty;
         }
 
-        // Actualizar jugadores
         const activeIds = new Set();
         for (const p of m.p) {
           const id = p[0];
           activeIds.add(id);
           if (!renderPlayers.has(id)) {
-            renderPlayers.set(id, { id, name: p[1], team: p[2], x: p[3], y: p[4], tx: p[3], ty: p[4], vx: p[5], vy: p[6], kicking: p[7] });
+            renderPlayers.set(id, {
+              id, name: p[1], team: p[2],
+              x: p[3], y: p[4], tx: p[3], ty: p[4],
+              kicking: p[5], sprinting: p[6], stamina: p[7]
+            });
           } else {
             const rp = renderPlayers.get(id);
-            rp.tx = p[3]; rp.ty = p[4]; rp.vx = p[5]; rp.vy = p[6]; rp.kicking = p[7];
+            rp.tx = p[3]; rp.ty = p[4];
+            rp.kicking = p[5]; rp.sprinting = p[6]; rp.stamina = p[7];
             if (Math.hypot(rp.tx - rp.x, rp.ty - rp.y) > 90) { rp.x = rp.tx; rp.y = rp.ty; }
+          }
+          if (id === myId) {
+            document.getElementById('staminaFill').style.width = p[7] + '%';
           }
         }
         for (const id of renderPlayers.keys()) {
           if (!activeIds.has(id)) renderPlayers.delete(id);
         }
 
-        // HUD
         document.getElementById('sRed').textContent = m.m.sr;
         document.getElementById('sBlue').textContent = m.m.sb;
         const mins = String(Math.floor(m.m.t / 60)).padStart(2, '0');
@@ -167,9 +267,18 @@ const CLIENT_HTML = `<!DOCTYPE html>
       ws.send(JSON.stringify({ type: 'JOIN', name: document.getElementById('nick').value, team }));
     };
 
-    const map = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'kick', KeyX: 'kick' };
+    const map = {
+      KeyW: 'up', ArrowUp: 'up',
+      KeyS: 'down', ArrowDown: 'down',
+      KeyA: 'left', ArrowLeft: 'left',
+      KeyD: 'right', ArrowRight: 'right',
+      Space: 'kick', KeyX: 'kick',
+      ShiftLeft: 'sprint', ShiftRight: 'sprint'
+    };
+
     function onKey(e, v) {
       if (document.activeElement === document.getElementById('nick')) return;
+      if (v && e.code === 'KeyF') { toggleFullscreen(); return; }
       const k = map[e.code];
       if (k && keys[k] !== v) {
         keys[k] = v;
@@ -180,30 +289,25 @@ const CLIENT_HTML = `<!DOCTYPE html>
     window.onkeyup = (e) => onKey(e, false);
 
     function smoothStep() {
-      // Predicción local inmediata para tu propio jugador + interpolación suave
       for (const rp of renderPlayers.values()) {
         if (rp.id === myId) {
           const ax = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
           const ay = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
-          if (ax || ay) {
-            const len = Math.hypot(ax, ay);
-            const acc = keys.kick ? 0.084 : 0.12;
-            rp.vx += (ax / len) * acc;
-            rp.vy += (ay / len) * acc;
-          }
-          rp.x += rp.vx; rp.y += rp.vy;
-          rp.vx *= 0.96; rp.vy *= 0.96;
-          // Corrección suave hacia el servidor sin tirones
-          rp.x += (rp.tx - rp.x) * 0.22;
-          rp.y += (rp.ty - rp.y) * 0.22;
+          rp.x += (rp.tx - rp.x) * 0.45;
+          rp.y += (rp.ty - rp.y) * 0.45;
           rp.kicking = keys.kick;
+          rp.sprinting = keys.sprint && (ax || ay) && rp.stamina > 0;
         } else {
-          rp.x += (rp.tx - rp.x) * 0.35;
-          rp.y += (rp.ty - rp.y) * 0.35;
+          rp.x += (rp.tx - rp.x) * 0.4;
+          rp.y += (rp.ty - rp.y) * 0.4;
+        }
+
+        if (rp.sprinting && Math.random() < 0.6) {
+          sprintTrails.push({ x: rp.x, y: rp.y, r: 13, a: 0.45 });
         }
       }
-      renderBall.x += renderBall.vx * 0.5 + (renderBall.tx - renderBall.x) * 0.35;
-      renderBall.y += renderBall.vy * 0.5 + (renderBall.ty - renderBall.y) * 0.35;
+      renderBall.x += (renderBall.tx - renderBall.x) * 0.4;
+      renderBall.y += (renderBall.ty - renderBall.y) * 0.4;
     }
 
     function draw() {
@@ -227,9 +331,18 @@ const CLIENT_HTML = `<!DOCTYPE html>
         ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#111'; ctx.stroke();
       });
 
+      for (let i = sprintTrails.length - 1; i >= 0; i--) {
+        const st = sprintTrails[i];
+        ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(251, 191, 36, ' + st.a + ')';
+        ctx.fill();
+        st.r *= 0.92; st.a -= 0.04;
+        if (st.a <= 0) sprintTrails.splice(i, 1);
+      }
+
       for (let i = fx.length - 1; i >= 0; i--) {
         ctx.beginPath(); ctx.arc(fx[i].x, fx[i].y, fx[i].r, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255,255,255,' + fx[i].a + ')'; ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,' + fx[i].a + ')'; ctx.lineWidth = 2.5; ctx.stroke();
         fx[i].r += 1.2; fx[i].a -= 0.08;
         if (fx[i].a <= 0) fx.splice(i, 1);
       }
@@ -237,13 +350,24 @@ const CLIENT_HTML = `<!DOCTYPE html>
       for (const p of renderPlayers.values()) {
         if (p.id === myId) {
           ctx.beginPath(); ctx.arc(p.x, p.y, 21, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.strokeStyle = p.sprinting ? 'rgba(251, 191, 36, 0.75)' : 'rgba(255,255,255,0.35)';
+          ctx.lineWidth = 2.5; ctx.stroke();
         }
         ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
         ctx.fillStyle = p.team === 'red' ? '#e56e56' : '#5689e5'; ctx.fill();
-        ctx.lineWidth = 3; ctx.strokeStyle = p.kicking ? '#fff' : '#111'; ctx.stroke();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = p.kicking ? '#ffffff' : (p.sprinting ? '#fbbf24' : '#111111');
+        ctx.stroke();
+
         ctx.font = '700 12px sans-serif'; ctx.textAlign = 'center';
         ctx.fillStyle = '#fff'; ctx.fillText(p.name, p.x, p.y + 29);
+
+        if (p.stamina < 100) {
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.fillRect(p.x - 14, p.y + 33, 28, 4);
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillRect(p.x - 14, p.y + 33, (28 * p.stamina) / 100, 4);
+        }
       }
 
       ctx.beginPath(); ctx.arc(renderBall.x, renderBall.y, 10, 0, Math.PI * 2);
@@ -265,7 +389,6 @@ class Disc {
   integrate() {
     if (!this.invMass) return;
     this.x += this.vx; this.y += this.vy;
-    this.vx *= this.damping; this.vy *= this.damping;
   }
 }
 
@@ -300,6 +423,7 @@ function resetPositions() {
   let r = 0, b = 0;
   for (const p of players.values()) {
     p.disc.vx = 0; p.disc.vy = 0;
+    p.stamina = 100;
     const idx = p.team === 'red' ? r++ : b++;
     const offY = idx === 0 ? 0 : (idx % 2 === 1 ? -55 : 55) * Math.ceil(idx / 2);
     p.disc.x = p.team === 'red' ? centerX - 150 : centerX + 150;
@@ -312,12 +436,37 @@ function stepPhysics() {
   for (const p of list) {
     if (!p.inputs.kick) { p.canKick = true; p.kicking = false; }
     else if (p.canKick) p.kicking = true;
+
     const ax = (p.inputs.right ? 1 : 0) - (p.inputs.left ? 1 : 0);
     const ay = (p.inputs.down ? 1 : 0) - (p.inputs.up ? 1 : 0);
-    if (ax || ay) {
-      const len = Math.hypot(ax, ay), acc = p.kicking ? 0.084 : 0.12;
-      p.disc.vx += (ax / len) * acc; p.disc.vy += (ay / len) * acc;
+    const wantsSprint = Boolean(p.inputs.sprint) && (ax !== 0 || ay !== 0) && !p.kicking;
+
+    if (wantsSprint && p.stamina > 0) {
+      p.sprinting = true;
+      p.stamina = Math.max(0, p.stamina - 0.75);
+    } else {
+      p.sprinting = false;
+      if (!p.inputs.sprint) {
+        p.stamina = Math.min(100, p.stamina + 0.45);
+      }
     }
+
+    // Sin inercia: velocidad directa instantánea según teclas pulsadas
+    const speed = p.kicking ? 1.6 : (p.sprinting ? 4.2 : 2.8);
+    if (ax !== 0 && ay !== 0) {
+      p.disc.vx = (ax / Math.hypot(ax, ay)) * speed;
+      p.disc.vy = (ay / Math.hypot(ax, ay)) * speed;
+    } else if (ax !== 0) {
+      p.disc.vx = ax * speed;
+      p.disc.vy = 0;
+    } else if (ay !== 0) {
+      p.disc.vx = 0;
+      p.disc.vy = ay * speed;
+    } else {
+      p.disc.vx = 0;
+      p.disc.vy = 0; // Se detiene en seco al soltar
+    }
+
     if (p.kicking && p.canKick) {
       const dx = ball.x - p.disc.x, dy = ball.y - p.disc.y, dist = Math.hypot(dx, dy);
       if (dist <= 29.5 && dist > 0) {
@@ -399,10 +548,12 @@ wss.on('connection', (ws) => {
           id,
           name: String(m.name || '').trim().slice(0, 14) || ('Player ' + id),
           team,
-          disc: new Disc(team === 'red' ? 270 : 570, 210, 15, 0.5, 0.96, 0.5),
-          inputs: { up: false, down: false, left: false, right: false, kick: false },
+          disc: new Disc(team === 'red' ? 270 : 570, 210, 15, 0.5, 1.0, 0.5),
+          inputs: { up: false, down: false, left: false, right: false, kick: false, sprint: false },
           canKick: true,
-          kicking: false
+          kicking: false,
+          sprinting: false,
+          stamina: 100
         };
         players.set(id, p);
         ws.send(JSON.stringify({ type: 'JOINED', playerId: id, team }));
@@ -415,19 +566,21 @@ wss.on('connection', (ws) => {
   ws.on('close', () => { if (p) players.delete(id); });
 });
 
-// Reloj optimizado a 16ms para no saturar CPUs gratuitas y enviar paquetes compactos
 let tickCount = 0;
 setInterval(() => {
   if (wss.clients.size === 0) return;
   stepPhysics();
   tickCount++;
-  // Enviamos estado por red a 30Hz (cada 2 ticks de física) con arrays compactos
   if (tickCount % 2 === 0) {
     broadcast({
       type: 'STATE',
       m: { st: match.state, sr: match.score.red, sb: match.score.blue, t: Math.floor(match.ticks / 60), rc: match.resetTicks / 60, lt: match.lastScorerTeam, ln: match.lastScorerName },
       b: [Number(ball.x.toFixed(1)), Number(ball.y.toFixed(1)), Number(ball.vx.toFixed(2)), Number(ball.vy.toFixed(2))],
-      p: Array.from(players.values()).map(pl => [pl.id, pl.name, pl.team, Number(pl.disc.x.toFixed(1)), Number(pl.disc.y.toFixed(1)), Number(pl.disc.vx.toFixed(2)), Number(pl.disc.vy.toFixed(2)), pl.kicking ? 1 : 0])
+      p: Array.from(players.values()).map(pl => [
+        pl.id, pl.name, pl.team,
+        Number(pl.disc.x.toFixed(1)), Number(pl.disc.y.toFixed(1)),
+        pl.kicking ? 1 : 0, pl.sprinting ? 1 : 0, Math.round(pl.stamina)
+      ])
     });
   }
 }, 16);
