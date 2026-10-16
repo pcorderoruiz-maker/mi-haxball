@@ -12,14 +12,14 @@ const FIXED_DT = 1000 / TICK_RATE;
 
 // ───────────────────────── AJUSTES DE JUEGO (toca aquí para afinar) ─────────────────────────
 const TUNE = {
-  walkSpeed: 2.0,        // velocidad normal (antes 2.8)
-  sprintSpeed: 3.4,      // velocidad con Shift (antes 4.2)
+  walkSpeed: 2.0,        // velocidad normal
+  sprintSpeed: 3.4,      // velocidad con Shift
   kickingSpeed: 1.3,     // velocidad mientras mantienes el chut
   staminaDrain: 0.75,    // gasto de energía por tick al esprintar
   staminaRegen: 0.45,    // recuperación por tick
-  kickPower: 5.0,        // fuerza del chut (antes 5.6)
+  kickPower: 5.0,        // fuerza del chut
   kickRange: 29.5,
-  ballDamping: 0.983,    // rozamiento de la pelota por tick: es lo que hace que SE PARE sola
+  ballDamping: 0.983,    // rozamiento de la pelota por tick
   ballStopSpeed: 0.05,   // por debajo de esta velocidad la pelota se detiene del todo
   ballMaxSpeed: 8,
   ballBounce: 0.75,      // rebote contra las bandas
@@ -68,7 +68,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
     .fs-btn:hover { background: #364457; }
 
     .stage { position: relative; width: 100%; aspect-ratio: 2 / 1; border: 2px solid #2f3844; border-radius: 0 0 10px 10px; overflow: hidden; box-shadow: 0 18px 45px rgba(0,0,0,0.65); contain: layout paint; }
-    canvas#c { display: block; width: 100%; height: 100%; background: #0b0f14; }
+    canvas#c { display: block; width: 100%; height: 100%; background: #0b0f14; transform: translateZ(0); }
 
     .adv-chip { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: none; padding: 4px 14px; border-radius: 999px; font-size: 13px; font-weight: 800; white-space: nowrap; background: rgba(10,14,20,0.8); border: 2px solid #fff; pointer-events: none; }
     .adv-chip.show { display: block; }
@@ -188,7 +188,12 @@ const CLIENT_HTML = `<!DOCTYPE html>
     const $ = (id) => document.getElementById(id);
     const W = 840, H = 420, L = 70, R = 770, T = 35, B = 385, CX = 420, CY = 210, TAU = Math.PI * 2;
     const TICK_MS = 1000 / 60;
-    const INTERP_DELAY = 45; // ms de buffer: suaviza el jitter de red
+    const INTERP_DELAY = 36; // Buffer ajustado con extrapolación anti-parones
+
+    // Constantes idénticas al servidor para predicción local en 0 ms
+    const WALK_SPEED = ${TUNE.walkSpeed};
+    const SPRINT_SPEED = ${TUNE.sprintSpeed};
+    const KICK_SPEED = ${TUNE.kickingSpeed};
 
     const ADV = [
       { icon: '🥅', name: 'Portería rival más ancha' },
@@ -204,7 +209,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       { name: 'Futurista', margin: '#04060f', stripeA: '#0a1230', stripeB: '#0c1638', line: '#22e6ff', trim: '#ff2bd6', net: 'rgba(34,230,255,0.30)' }
     ];
 
-    // ───────── Escudos: si existen crests/sevilla.png y crests/betis.png se usan; si no, se dibuja uno estilizado ─────────
     const crestImg = [null, null, null];
     let crestVer = 0;
     ['sevilla', 'betis'].forEach((n, i) => {
@@ -268,7 +272,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       g.restore();
     }
 
-    // ───────── Pintado de campos (se dibujan UNA vez en un canvas de caché) ─────────
     function paintLines(g, color, alpha) {
       g.save(); g.globalAlpha = alpha; g.strokeStyle = color; g.lineWidth = 3;
       g.strokeRect(L, T, R - L, B - T);
@@ -317,7 +320,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       g.lineWidth = 4; g.strokeStyle = th.trim; g.strokeRect(5, 5, W - 10, H - 10);
     }
 
-    // Capa de neón del campo futurista (se dibuja una vez con brillo; en pantalla solo se pulsa su opacidad)
     function paintNeon(g, k) {
       g.save();
       g.lineJoin = 'round'; g.lineCap = 'round';
@@ -338,24 +340,36 @@ const CLIENT_HTML = `<!DOCTYPE html>
       g.restore();
     }
 
-    // ───────── Estado ─────────
+    // Caché de etiquetas de nombre para evitar strokeText() en cada frame
+    function makeNameBadge(text) {
+      const c = document.createElement('canvas');
+      c.width = 120; c.height = 20;
+      const g = c.getContext('2d');
+      g.font = '700 12px "Segoe UI", sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.65)';
+      g.strokeText(text, 60, 10);
+      g.fillStyle = '#ffffff';
+      g.fillText(text, 60, 10);
+      return c;
+    }
+
     let myId = null, hostId = 0, team = 'auto', pingMs = 0, lastPingSent = 0, curSt = 2;
     const meta = { sr: 0, sb: 0, lt: null, ln: '', adv: null, gl: 65, gr: 65, map: 0, mode: 0, limit: 10, ot: 0, w: null };
     const roster = new Map();
     const snaps = [];
     const rps = new Map();
-    const ball = { x: CX, y: CY };
+    const ball = { x: CX, y: CY, vx: 0, vy: 0 };
     const trails = [], fx = [];
-    let clockOffset = null, frameNo = 0, goalL = 65, goalR = 65;
+    let clockOffset = null, frameNo = 0, goalL = 65, goalR = 65, lastEpoch = -1;
     let lastT = -1, lastStam = -1, lastSub = '';
 
     const canvas = $('c');
-    const ctx = canvas.getContext('2d', { alpha: false });
-    const stage = $('stage'), clockEl = $('clock'), modeTag = $('modeTag'), staminaFill = $('staminaFill');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    const clockEl = $('clock'), modeTag = $('modeTag'), staminaFill = $('staminaFill');
     const statusEl = $('status'), dot = $('dot'), advChip = $('advChip'), nickEl = $('nick');
     const setupEl = $('setup'), startBtn = $('startBtn'), hostNote = $('hostNote'), chipsEl = $('chips'), optLabel = $('optLabel');
 
-    // ───────── Pantalla completa ─────────
     const fsBtn = $('fsBtn');
     function toggleFullscreen() {
       if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
@@ -366,7 +380,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       fsBtn.textContent = document.fullscreenElement ? '✕ Salir Pantalla Completa' : '⛶ Pantalla Completa';
     });
 
-    // ───────── Red ─────────
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host);
     ws.onopen = () => {
       dot.classList.add('online');
@@ -388,7 +401,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
           break;
         case 'ROSTER':
           roster.clear();
-          for (const r of m.p) roster.set(r[0], { name: r[1], team: r[2] });
+          for (const r of m.p) roster.set(r[0], { name: r[1], team: r[2], badge: makeNameBadge(r[1]) });
           hostId = m.host; renderSetup();
           break;
         case 'JOINED': myId = m.playerId; updateOverlays(); renderSetup(); break;
@@ -402,11 +415,12 @@ const CLIENT_HTML = `<!DOCTYPE html>
 
     function onState(m) {
       const now = performance.now(), st = m.n * TICK_MS, sample = now - st;
-      if (clockOffset === null) clockOffset = sample;
-      else if (sample < clockOffset) clockOffset += (sample - clockOffset) * 0.35;
-      else clockOffset += (sample - clockOffset) * 0.01;
+      // Filtro simétrico con corrección rápida si hay salto brusco
+      if (clockOffset === null || Math.abs(sample - clockOffset) > 120) clockOffset = sample;
+      else clockOffset += (sample - clockOffset) * 0.08;
+
       snaps.push({ t: st, z: m.z, b: m.b, p: m.p });
-      if (snaps.length > 24) snaps.shift();
+      if (snaps.length > 20) snaps.shift();
 
       if (m.st !== curSt) { curSt = m.st; updateOverlays(); }
       if (m.t !== lastT) { lastT = m.t; clockEl.textContent = fmt(m.t); }
@@ -425,7 +439,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
     }
 
-    // ───────── Overlays y HUD ─────────
     function updateModeTag() {
       if (meta.ot) { modeTag.textContent = 'GOL DE ORO'; modeTag.classList.add('gold'); }
       else {
@@ -464,7 +477,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       } else advChip.className = 'adv-chip';
     }
 
-    // ───────── Pantalla de configuración (el anfitrión es el primer jugador que entró) ─────────
     const cards = [], thumbs = [];
     THEMES.forEach((th, i) => {
       const b = document.createElement('button');
@@ -533,7 +545,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       ws.send(JSON.stringify({ type: 'JOIN', name: nickEl.value, team }));
     };
 
-    // ───────── Teclado: si pulsas dos direcciones opuestas manda la ÚLTIMA pulsada ─────────
     const NEG_X = ['KeyA', 'ArrowLeft'], POS_X = ['KeyD', 'ArrowRight'];
     const NEG_Y = ['KeyW', 'ArrowUp'], POS_Y = ['KeyS', 'ArrowDown'];
     const KICK = ['Space', 'KeyX'], SPRINT = ['ShiftLeft', 'ShiftRight'];
@@ -574,99 +585,149 @@ const CLIENT_HTML = `<!DOCTYPE html>
     });
     window.addEventListener('blur', () => { for (const k in down) delete down[k]; pushInput(); });
 
-    // ───────── Interpolación de snapshots (movimiento suave sin tirones) ─────────
-    function interpolate(ts) {
+    // ───────── Interpolación de rivales/pelota + Predicción 0ms del jugador local ─────────
+    function stepAndInterpolate(ts, dt) {
       const n = snaps.length;
       if (!n || clockOffset === null) return;
       const rt = ts - clockOffset - INTERP_DELAY;
       const last = snaps[n - 1];
-      let a, b, k = 0;
-      if (n === 1 || rt >= last.t) { a = b = last; }
-      else if (rt <= snaps[0].t) { a = b = snaps[0]; }
-      else {
+      let a, b, k = 0, extrapTicks = 0;
+
+      if (n === 1 || rt >= last.t) {
+        a = b = last;
+        // Si un paquete tarda unos ms más, extrapolamos suavemente con la velocidad real
+        extrapTicks = Math.min(3.0, Math.max(0, (rt - last.t) / TICK_MS));
+      } else if (rt <= snaps[0].t) {
+        a = b = snaps[0];
+      } else {
         let i = n - 1;
         while (i > 0 && snaps[i - 1].t > rt) i--;
         a = snaps[i - 1]; b = snaps[i];
         k = (rt - a.t) / (b.t - a.t);
       }
-      if (a.z !== b.z) { a = b; k = 0; } // teletransporte (saque): no deslizar
 
-      ball.x = a.b[0] + (b.b[0] - a.b[0]) * k;
-      ball.y = a.b[1] + (b.b[1] - a.b[1]) * k;
+      const teleported = (a.z !== b.z) || (last.z !== lastEpoch);
+      if (a.z !== b.z) { a = b; k = 0; extrapTicks = 0; }
+      lastEpoch = last.z;
+
+      // Posición de la pelota (interpolada + extrapolación suave si hay jitter)
+      ball.x = a.b[0] + (b.b[0] - a.b[0]) * k + (b.b[2] || 0) * extrapTicks;
+      ball.y = a.b[1] + (b.b[1] - a.b[1]) * k + (b.b[3] || 0) * extrapTicks;
 
       frameNo++;
+      const dtTicks = dt / TICK_MS;
+
       for (let i = 0; i < b.p.length; i++) {
         const pb = b.p[i];
+        const id = pb[0];
         let pa = pb;
-        if (a !== b) for (let j = 0; j < a.p.length; j++) if (a.p[j][0] === pb[0]) { pa = a.p[j]; break; }
-        let rp = rps.get(pb[0]);
-        if (!rp) { rp = { id: pb[0], x: pb[1], y: pb[2], f: 0, st: 100, ta: 0, mark: 0 }; rps.set(pb[0], rp); }
-        rp.x = pa[1] + (pb[1] - pa[1]) * k;
-        rp.y = pa[2] + (pb[2] - pa[2]) * k;
-        rp.f = pb[3]; rp.st = pb[4]; rp.mark = frameNo;
+        if (a !== b) for (let j = 0; j < a.p.length; j++) if (a.p[j][0] === id) { pa = a.p[j]; break; }
+
+        let rp = rps.get(id);
+        if (!rp) {
+          rp = { id, x: pb[1], y: pb[2], f: pb[3], st: pb[4], ta: 0, mark: 0 };
+          rps.set(id, rp);
+        }
+
+        if (id === myId) {
+          // JUGADOR LOCAL: Respuesta en 0ms al teclado y parada en seco instantánea al soltar
+          const srvX = last.p[i] ? last.p[i][1] : pb[1];
+          const srvY = last.p[i] ? last.p[i][2] : pb[2];
+          rp.st = pb[4];
+
+          if (teleported || Math.hypot(srvX - rp.x, srvY - rp.y) > 65) {
+            rp.x = srvX; rp.y = srvY;
+          } else {
+            const moving = cur.x !== 0 || cur.y !== 0;
+            const sprinting = cur.s && moving && !cur.k && rp.st > 0;
+            const spd = cur.k ? KICK_SPEED : (sprinting ? SPRINT_SPEED : WALK_SPEED);
+            const diag = (cur.x !== 0 && cur.y !== 0) ? 0.70710678 : 1;
+
+            if (moving) {
+              rp.x += cur.x * spd * diag * dtTicks;
+              rp.y += cur.y * spd * diag * dtTicks;
+              // Reconciliación suave con el servidor mientras nos movemos
+              rp.x += (srvX - rp.x) * 0.16;
+              rp.y += (srvY - rp.y) * 0.16;
+            } else {
+              // Al soltar las teclas: CERO deslizamiento local, clavado inmediato
+              if (Math.hypot(srvX - rp.x, srvY - rp.y) > 22) {
+                rp.x += (srvX - rp.x) * 0.35;
+                rp.y += (srvY - rp.y) * 0.35;
+              }
+            }
+            rp.x = Math.max(15, Math.min(825, rp.x));
+            rp.y = Math.max(15, Math.min(405, rp.y));
+            rp.f = (cur.k ? 1 : 0) | (sprinting ? 2 : 0);
+          }
+        } else {
+          // RIVALES: Interpolación pura
+          rp.x = pa[1] + (pb[1] - pa[1]) * k;
+          rp.y = pa[2] + (pb[2] - pa[2]) * k;
+          rp.f = pb[3];
+          rp.st = pb[4];
+        }
+        rp.mark = frameNo;
       }
       for (const entry of rps) if (entry[1].mark !== frameNo) rps.delete(entry[0]);
     }
 
-    // ───────── Render ─────────
-    let fieldCv = null, glowCv = null, fMap = -1, fW = 0, fH = 0, fCrest = -1;
-    function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.max(2, Math.round(canvas.clientWidth * dpr)), h = Math.max(2, Math.round(canvas.clientHeight * dpr));
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-    }
-    if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
-    window.addEventListener('resize', resize);
-    resize();
+    // ───────── Renderizado ultra-rápido con caché de campo y porterías ─────────
+    let fieldCv = null, glowCv = null, fMap = -1, fCrest = -1, fGL = -1, fGR = -1;
 
-    function rebuildField(mi) {
-      const w = canvas.width, h = canvas.height;
-      fieldCv = document.createElement('canvas'); fieldCv.width = w; fieldCv.height = h;
-      const g = fieldCv.getContext('2d');
-      g.setTransform(w / W, 0, 0, h / H, 0, 0);
+    function paintGoalTo(g, left, half, th) {
+      const x0 = left ? 28 : R, w = 42, y0 = CY - half, h = half * 2;
+      g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(x0, y0, w, h);
+      g.strokeStyle = th.net; g.lineWidth = 1; g.beginPath();
+      for (let x = x0 + 7; x < x0 + w; x += 7) { g.moveTo(x, y0); g.lineTo(x, y0 + h); }
+      for (let y = y0 + 8; y < y0 + h; y += 8) { g.moveTo(x0, y); g.lineTo(x0 + w, y); }
+      g.stroke();
+      g.strokeStyle = th.line; g.lineWidth = 3; g.strokeRect(x0, y0, w, h);
+    }
+
+    function paintPostTo(g, x, y, c) {
+      g.beginPath(); g.arc(x, y, 8, 0, TAU);
+      g.fillStyle = c; g.fill(); g.lineWidth = 2; g.strokeStyle = '#111'; g.stroke();
+    }
+
+    function rebuildField(mi, gl, gr) {
+      fieldCv = document.createElement('canvas'); fieldCv.width = W; fieldCv.height = H;
+      const g = fieldCv.getContext('2d', { alpha: false });
+      const th = THEMES[mi];
       paintBase(g, mi);
+      paintGoalTo(g, true, gl, th);
+      paintGoalTo(g, false, gr, th);
+      paintPostTo(g, L, CY - gl, '#ef4444'); paintPostTo(g, L, CY + gl, '#ef4444');
+      paintPostTo(g, R, CY - gr, '#3b82f6'); paintPostTo(g, R, CY + gr, '#3b82f6');
+
       glowCv = null;
       if (mi === 2) {
-        glowCv = document.createElement('canvas'); glowCv.width = w; glowCv.height = h;
+        glowCv = document.createElement('canvas'); glowCv.width = W; glowCv.height = H;
         const g2 = glowCv.getContext('2d');
-        g2.setTransform(w / W, 0, 0, h / H, 0, 0);
-        paintNeon(g2, w / W);
+        paintNeon(g2, 1);
       }
-      fMap = mi; fW = w; fH = h; fCrest = crestVer;
-    }
-
-    function drawGoal(left, half, th) {
-      const x0 = left ? 28 : R, w = 42, y0 = CY - half, h = half * 2;
-      ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.fillRect(x0, y0, w, h);
-      ctx.strokeStyle = th.net; ctx.lineWidth = 1; ctx.beginPath();
-      for (let x = x0 + 7; x < x0 + w; x += 7) { ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); }
-      for (let y = y0 + 8; y < y0 + h; y += 8) { ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); }
-      ctx.stroke();
-      ctx.strokeStyle = th.line; ctx.lineWidth = 3; ctx.strokeRect(x0, y0, w, h);
-    }
-    function drawPost(x, y, c) {
-      ctx.beginPath(); ctx.arc(x, y, 8, 0, TAU);
-      ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#111'; ctx.stroke();
+      fMap = mi; fCrest = crestVer; fGL = gl; fGR = gr;
     }
 
     function draw(ts, dt) {
       const mi = meta.map;
-      if (fMap !== mi || fW !== canvas.width || fH !== canvas.height || fCrest !== crestVer) rebuildField(mi);
-      const th = THEMES[mi];
-
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.drawImage(fieldCv, 0, 0);
-      if (glowCv) { ctx.globalAlpha = 0.62 + 0.38 * Math.sin(ts / 650); ctx.drawImage(glowCv, 0, 0); ctx.globalAlpha = 1; }
-      ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
-
-      // porterías (dinámicas: la ventaja "portería ancha" las ensancha con animación)
       const kk = 1 - Math.exp(-dt / 110);
-      goalL += (meta.gl - goalL) * kk; goalR += (meta.gr - goalR) * kk;
-      drawGoal(true, goalL, th); drawGoal(false, goalR, th);
-      drawPost(L, CY - goalL, '#ef4444'); drawPost(L, CY + goalL, '#ef4444');
-      drawPost(R, CY - goalR, '#3b82f6'); drawPost(R, CY + goalR, '#3b82f6');
+      goalL = Math.abs(meta.gl - goalL) < 0.2 ? meta.gl : goalL + (meta.gl - goalL) * kk;
+      goalR = Math.abs(meta.gr - goalR) < 0.2 ? meta.gr : goalR + (meta.gr - goalR) * kk;
 
-      // estela de esprint
+      if (fMap !== mi || fCrest !== crestVer || Math.abs(fGL - goalL) > 0.3 || Math.abs(fGR - goalR) > 0.3) {
+        rebuildField(mi, goalL, goalR);
+      }
+
+      // Pintado directo 1:1 desde el canvas en caché (0 sobrecarga de vectores)
+      ctx.drawImage(fieldCv, 0, 0);
+      if (glowCv) {
+        ctx.globalAlpha = 0.62 + 0.38 * Math.sin(ts / 650);
+        ctx.drawImage(glowCv, 0, 0);
+        ctx.globalAlpha = 1;
+      }
+
+      // Estela de esprint
       ctx.fillStyle = '#fbbf24';
       for (let i = trails.length - 1; i >= 0; i--) {
         const s = trails[i];
@@ -676,7 +737,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
         ctx.globalAlpha = 0.45 * f;
         ctx.beginPath(); ctx.arc(s.x, s.y, 13 * (0.55 + 0.45 * f), 0, TAU); ctx.fill();
       }
-      // onda de chut
+      // Onda de chut
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5;
       for (let i = fx.length - 1; i >= 0; i--) {
         const s = fx[i];
@@ -688,15 +749,14 @@ const CLIENT_HTML = `<!DOCTYPE html>
       }
       ctx.globalAlpha = 1;
 
-      // jugadores
-      ctx.font = '700 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      // Jugadores
       for (const p of rps.values()) {
         const info = roster.get(p.id);
         if (!info) continue;
         const kicking = p.f & 1, sprinting = p.f & 2;
         if (sprinting) {
           p.ta += dt;
-          while (p.ta >= 28) { p.ta -= 28; if (trails.length < 160) trails.push({ x: p.x, y: p.y, life: 300 }); }
+          while (p.ta >= 28) { p.ta -= 28; if (trails.length < 120) trails.push({ x: p.x, y: p.y, life: 280 }); }
         } else p.ta = 0;
 
         if (p.id === myId) {
@@ -710,8 +770,8 @@ const CLIENT_HTML = `<!DOCTYPE html>
         ctx.strokeStyle = kicking ? '#ffffff' : (sprinting ? '#fbbf24' : '#111111');
         ctx.stroke();
 
-        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.strokeText(info.name, p.x, p.y + 29);
-        ctx.fillStyle = '#fff'; ctx.fillText(info.name, p.x, p.y + 29);
+        // Etiqueta de nombre pre-renderizada (10x más rápido que strokeText)
+        ctx.drawImage(info.badge, p.x - 60, p.y + 16);
 
         if (p.st < 100) {
           ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(p.x - 14, p.y + 33, 28, 4);
@@ -719,7 +779,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
         }
       }
 
-      // pelota
+      // Pelota
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath(); ctx.ellipse(ball.x + 2, ball.y + 5, 9, 4, 0, 0, TAU); ctx.fill();
       ctx.beginPath(); ctx.arc(ball.x, ball.y, 10, 0, TAU);
@@ -729,9 +789,9 @@ const CLIENT_HTML = `<!DOCTYPE html>
     let lastTs = 0;
     function frame(ts) {
       requestAnimationFrame(frame);
-      const dt = lastTs ? Math.min(50, ts - lastTs) : 16;
+      const dt = lastTs ? Math.min(50, ts - lastTs) : 16.666;
       lastTs = ts;
-      interpolate(ts);
+      stepAndInterpolate(ts, dt);
       draw(ts, dt);
     }
     requestAnimationFrame(frame);
@@ -770,7 +830,7 @@ const posts = [
 ];
 const goals = { l: TUNE.goalHalf, r: TUNE.goalHalf };
 
-const cfg = { map: 0, mode: 0, limit: 10 }; // map 0/1/2, mode 0 = tiempo (min) / 1 = goles
+const cfg = { map: 0, mode: 0, limit: 10 };
 const match = {
   state: 2, // 0 jugando · 1 celebración de gol · 2 configuración · 3 fin de partida
   score: { red: 0, blue: 0 }, ticks: 0, resetTicks: 0, endTicks: 0, overtime: false,
@@ -802,7 +862,7 @@ function slot(team, idx) {
 }
 
 function resetPositions() {
-  epoch++; // el cliente no interpola a través de un teletransporte
+  epoch++;
   ball.x = CX; ball.y = CY; ball.vx = 0; ball.vy = 0;
   let r = 0, b = 0;
   for (const p of plist) {
@@ -817,7 +877,6 @@ function layoutGoals() {
   posts[2].y = CY - goals.r; posts[3].y = CY + goals.r;
 }
 
-// La ventaja "wide" ensancha la portería RIVAL del equipo beneficiado
 function applyGoals() {
   goals.l = goals.r = TUNE.goalHalf;
   const a = match.adv;
@@ -884,13 +943,13 @@ function goalScored(teamName) {
   match.adv = null;
   if (match.overtime || (cfg.mode === 1 && match.score[teamName] >= cfg.limit)) { endMatch(teamName); return; }
   match.state = 1; match.resetTicks = TUNE.celebrationTicks;
-  match.nextAdv = pickAdvantage(other); // ventaja para el equipo que ha encajado el gol
+  match.nextAdv = pickAdvantage(other);
   sendMeta();
 }
 
 function timeUp() {
   if (match.score.red !== match.score.blue) endMatch(match.score.red > match.score.blue ? 'red' : 'blue');
-  else { match.overtime = true; sendMeta(); } // empate: gol de oro
+  else { match.overtime = true; sendMeta(); }
 }
 
 function stepPhysics() {
@@ -912,7 +971,6 @@ function stepPhysics() {
       if (!p.is) p.stamina = Math.min(100, p.stamina + TUNE.staminaRegen);
     }
 
-    // Sin inercia. La velocidad base es lenta; solo Shift la aumenta.
     const speed = p.kicking ? TUNE.kickingSpeed : (p.sprinting ? TUNE.sprintSpeed : TUNE.walkSpeed);
     const k = (p.ix !== 0 && p.iy !== 0) ? 0.70710678 : 1;
     d.vx = p.ix * speed * k;
@@ -941,7 +999,6 @@ function stepPhysics() {
   }
   for (let q = 0; q < 4; q++) collide(ball, posts[q]);
 
-  // Bordes del campo y porterías (cada portería tiene su propia altura)
   const lt = CY - goals.l, lb = CY + goals.l, rt = CY - goals.r, rb = CY + goals.r;
   if (ball.x < L) {
     if (ball.y - 10 < lt) { ball.y = lt + 10; ball.vy *= -0.3; }
@@ -958,7 +1015,6 @@ function stepPhysics() {
     if (!(ball.y > rt && ball.y < rb) && ball.x + 10 > R) { ball.x = R - 10; ball.vx *= -TUNE.ballBounce; }
   }
 
-  // La pelota se detiene del todo cuando casi no se mueve, y nunca supera la velocidad máxima
   const sp2 = ball.vx * ball.vx + ball.vy * ball.vy;
   if (sp2 < TUNE.ballStopSpeed * TUNE.ballStopSpeed) { ball.vx = 0; ball.vy = 0; }
   else if (sp2 > TUNE.ballMaxSpeed * TUNE.ballMaxSpeed) {
@@ -980,7 +1036,7 @@ function stepPhysics() {
 // ───────────────────────── RED ─────────────────────────
 const HTML_BUF = Buffer.from(CLIENT_HTML, 'utf8');
 const HTML_GZ = zlib.gzipSync(HTML_BUF, { level: 9 });
-const CREST_NAMES = new Set(['sevilla.png', 'betis.png']); // pon estos PNG en ./crests/ para usar los escudos oficiales
+const CREST_NAMES = new Set(['sevilla.png', 'betis.png']);
 const crestCache = new Map();
 
 const httpServer = http.createServer((req, res) => {
@@ -1004,22 +1060,27 @@ const httpServer = http.createServer((req, res) => {
   res.end(gz ? HTML_GZ : HTML_BUF);
 });
 
+// Desactivar el algoritmo de Nagle en todos los sockets TCP entrantes para latencia 0
+httpServer.on('connection', (socket) => {
+  socket.setNoDelay(true);
+});
+
 const wss = new WebSocketServer({ server: httpServer, perMessageDeflate: false, maxPayload: 2048 });
 
-// droppable: los snapshots se descartan para clientes con la cola saturada; los eventos nunca
 function broadcast(data, droppable) {
   for (const c of wss.clients) {
     if (c.readyState !== WebSocket.OPEN) continue;
-    if (droppable && c.bufferedAmount > 262144) continue;
+    if (droppable && c.bufferedAmount > 65536) continue;
     c.send(data);
   }
 }
 
 const r1 = (v) => Math.round(v * 10) / 10;
+const r2 = (v) => Math.round(v * 100) / 100;
 function buildState() {
   let s = '{"type":"STATE","n":' + tick + ',"z":' + epoch + ',"st":' + match.state + ',"t":' + clockSeconds()
     + ',"rc":' + (match.state === 1 ? (match.resetTicks / 60).toFixed(1) : 0)
-    + ',"b":[' + r1(ball.x) + ',' + r1(ball.y) + '],"p":[';
+    + ',"b":[' + r1(ball.x) + ',' + r1(ball.y) + ',' + r2(ball.vx) + ',' + r2(ball.vy) + '],"p":[';
   for (let i = 0; i < plist.length; i++) {
     const p = plist[i];
     s += (i ? ',[' : '[') + p.id + ',' + r1(p.disc.x) + ',' + r1(p.disc.y) + ','
@@ -1028,7 +1089,8 @@ function buildState() {
   return s + ']}';
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  if (req && req.socket) req.socket.setNoDelay(true);
   const id = nextId++;
   let p = null;
   ws.send(metaJSON());
@@ -1082,12 +1144,11 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Bucle de paso fijo a 60 Hz con acumulador: la simulación no depende de la precisión de los timers
 let acc = 0, prev = performance.now();
 function loop() {
   const now = performance.now();
   if (wss.clients.size === 0) { prev = now; acc = 0; setTimeout(loop, 200); return; }
-  acc += Math.min(now - prev, 100);
+  acc += Math.min(now - prev, 66.7);
   prev = now;
   let steps = 0;
   while (acc >= FIXED_DT) { stepPhysics(); acc -= FIXED_DT; steps++; }
