@@ -14,7 +14,6 @@ const FIXED_DT = 1000 / TICK_RATE;
 const TUNE = {
   walkSpeed: 2.0,        // velocidad normal
   sprintSpeed: 3.4,      // velocidad con Shift
-  kickingSpeed: 1.3,     // velocidad mientras mantienes el chut
   staminaDrain: 0.75,    // gasto de energía por tick al esprintar
   staminaRegen: 0.45,    // recuperación por tick
   kickPower: 5.0,        // fuerza del chut
@@ -148,7 +147,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
     <div class="stage" id="stage">
       <canvas id="c" width="840" height="420"></canvas>
       <div class="adv-chip" id="advChip"></div>
-      <div class="spec-pill" id="specPill">👁 Modo Espectador (pulsa "⚽ Jugar" arriba para entrar al campo)</div>
+      <div class="spec-pill" id="specPill">👁 Modo Espectador (pulsa "⚽ Entrar a Jugar" arriba para saltar al campo)</div>
       <div class="goal-banner" id="gBanner">
         <div class="goal-title" id="gTitle"></div>
         <div class="goal-sub" id="gSub"></div>
@@ -200,17 +199,16 @@ const CLIENT_HTML = `<!DOCTYPE html>
     const $ = (id) => document.getElementById(id);
     const W = 840, H = 420, L = 70, R = 770, T = 35, B = 385, CX = 420, CY = 210, TAU = Math.PI * 2;
     const TICK_MS = 1000 / 60;
-    const BUFFER_TICKS = 2.0; // Buffer corto para rivales y pelota
+    const BUFFER_TICKS = 2.0;
 
-    // Constantes físicas sincronizadas con el servidor para predicción en 0 ms
+    // Constantes físicas sincronizadas con el servidor (sin reducción de velocidad al chutar)
     const WALK_SPEED = ${TUNE.walkSpeed};
     const SPRINT_SPEED = ${TUNE.sprintSpeed};
-    const KICK_SPEED = ${TUNE.kickingSpeed};
     const SPEED_MULT = ${TUNE.speedMult};
     const PLAYER_R = ${TUNE.playerRadius};
     const GIANT_R = ${TUNE.giantRadius};
 
-    // 7 Ventajas (4 originales + 3 nuevas)
+    // 7 Ventajas
     const ADV = [
       { icon: '🥅', name: 'Portería rival más ancha' },
       { icon: '💥', name: 'Chute potente' },
@@ -382,9 +380,8 @@ const CLIENT_HTML = `<!DOCTYPE html>
     let renderTick = null, frameNo = 0, goalL = 65, goalR = 65;
     let lastT = -1, lastStam = -1, lastSub = '';
 
-    // Estado de predicción en 0 ms del jugador local + historial temporal para reconciliación sin tirones
     const me = { x: CX, y: CY, st: 100, epoch: -1, active: false };
-    const predHist = []; // [{ t, x, y }]
+    const predHist = [];
 
     const canvas = $('c');
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -403,7 +400,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       fsBtn.textContent = document.fullscreenElement ? '✕ Salir' : '⛶ Pantalla Completa';
     });
 
-    // Botón para alternar Modo Espectador <-> Jugar en cualquier momento
     specBtn.onclick = () => {
       if (ws.readyState === 1 && myId !== null) {
         const nextTeam = myTeam === 'spec' ? 'auto' : 'spec';
@@ -484,7 +480,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
         return;
       }
 
-      // Buscar dónde estaba nuestro jugador local en el instante exacto (ackCt) que acaba de simular el servidor
       const targetTime = ackCt > 0 ? ackCt : (performance.now() - pingMs);
       let past = null;
       for (let i = predHist.length - 1; i >= 0; i--) {
@@ -501,7 +496,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
         me.x = srvX; me.y = srvY;
         predHist.length = 0;
       } else if (errDist > 1.8) {
-        // Solo corrige si hubo choque con balón u otro jugador, desplazando también el historial para no rebotar
         const cx = errX * 0.28, cy = errY * 0.28;
         me.x += cx; me.y += cy;
         for (let i = 0; i < predHist.length; i++) {
@@ -696,8 +690,9 @@ const CLIENT_HTML = `<!DOCTYPE html>
       const isGiant = hasAdv(myTeam, 4);
       const rad = isGiant ? GIANT_R : PLAYER_R;
 
-      const sprinting = cur.s && moving && !cur.k && (me.st > 0 || infStam);
-      let speed = cur.k ? KICK_SPEED : (sprinting ? SPRINT_SPEED : WALK_SPEED);
+      // Sin reducción de velocidad al chutar (puedes caminar y esprintar mientras chutas)
+      const sprinting = cur.s && moving && (me.st > 0 || infStam);
+      let speed = sprinting ? SPRINT_SPEED : WALK_SPEED;
       if (turbo) speed *= SPEED_MULT;
 
       if (moving) {
@@ -706,7 +701,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
         me.y += cur.y * speed * diag * dtTicks;
       }
 
-      // Colisión local con postes y bordes para que no haya tirones al rozar paredes
       const posts = [
         [L, CY - meta.gl], [L, CY + meta.gl],
         [R, CY - meta.gr], [R, CY + meta.gr]
@@ -904,7 +898,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
 
 // ───────────────────────── FÍSICAS DEL SERVIDOR ─────────────────────────
 const CX = 420, CY = 210, L = 70, R = 770, T = 35, B = 385;
-// 7 ventajas: 4 clásicas + 3 nuevas ('giant', 'speed', 'smallgoal')
 const ADV_IDS = ['wide', 'power', 'stamina', 'double', 'giant', 'speed', 'smallgoal'];
 const TIMES = [5, 10, 15];
 
@@ -920,9 +913,9 @@ class Disc {
   }
 }
 
-const players = new Map(); // Incluye jugadores en cancha ('red'/'blue') y espectadores ('spec')
+const players = new Map();
 let allList = [];
-let plist = [];            // Solo jugadores activos en cancha ('red' o 'blue')
+let plist = [];
 let nextId = 1;
 
 function rebuildList() {
@@ -1089,7 +1082,8 @@ function stepPhysics() {
     const infStamina = adv !== null && adv.id === 'stamina' && adv.team === p.team;
     const hasTurbo = adv !== null && adv.id === 'speed' && adv.team === p.team;
 
-    if (p.is && moving && !p.kicking && (p.stamina > 0 || infStamina)) {
+    // Sin bloqueo de esprint ni reducción de velocidad al mantener pulsado chutar
+    if (p.is && moving && (p.stamina > 0 || infStamina)) {
       p.sprinting = true;
       p.stamina = infStamina ? 100 : Math.max(0, p.stamina - TUNE.staminaDrain);
     } else {
@@ -1097,7 +1091,7 @@ function stepPhysics() {
       if (!p.is) p.stamina = Math.min(100, p.stamina + TUNE.staminaRegen);
     }
 
-    let speed = p.kicking ? TUNE.kickingSpeed : (p.sprinting ? TUNE.sprintSpeed : TUNE.walkSpeed);
+    let speed = p.sprinting ? TUNE.sprintSpeed : TUNE.walkSpeed;
     if (hasTurbo) speed *= TUNE.speedMult;
 
     const k = (p.ix !== 0 && p.iy !== 0) ? 0.70710678 : 1;
