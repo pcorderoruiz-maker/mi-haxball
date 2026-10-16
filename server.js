@@ -201,14 +201,19 @@ const CLIENT_HTML = `<!DOCTYPE html>
     const TICK_MS = 1000 / 60;
     const BUFFER_TICKS = 2.0;
 
-    // Constantes físicas sincronizadas con el servidor (sin reducción de velocidad al chutar)
+    // Constantes físicas idénticas al servidor
     const WALK_SPEED = ${TUNE.walkSpeed};
     const SPRINT_SPEED = ${TUNE.sprintSpeed};
     const SPEED_MULT = ${TUNE.speedMult};
     const PLAYER_R = ${TUNE.playerRadius};
     const GIANT_R = ${TUNE.giantRadius};
+    const KICK_POWER = ${TUNE.kickPower};
+    const POWER_MULT = ${TUNE.powerMult};
+    const BALL_DAMPING = ${TUNE.ballDamping};
+    const BALL_STOP = ${TUNE.ballStopSpeed};
+    const BALL_MAX = ${TUNE.ballMaxSpeed};
+    const BALL_BOUNCE = ${TUNE.ballBounce};
 
-    // 7 Ventajas
     const ADV = [
       { icon: '🥅', name: 'Portería rival más ancha' },
       { icon: '💥', name: 'Chute potente' },
@@ -375,13 +380,14 @@ const CLIENT_HTML = `<!DOCTYPE html>
     const roster = new Map();
     const snaps = [];
     const rps = new Map();
-    const ball = { x: CX, y: CY };
+    const ball = { x: CX, y: CY, vx: 0, vy: 0, epoch: -1, init: false };
     const trails = [], fx = [];
     let renderTick = null, frameNo = 0, goalL = 65, goalR = 65;
     let lastT = -1, lastStam = -1, lastSub = '';
 
-    const me = { x: CX, y: CY, st: 100, epoch: -1, active: false };
+    const me = { x: CX, y: CY, vx: 0, vy: 0, st: 100, epoch: -1, active: false, canKick: true, kicking: false };
     const predHist = [];
+    const ballHist = [];
 
     const canvas = $('c');
     const ctx = canvas.getContext('2d', { alpha: false });
@@ -465,7 +471,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
       if (isSpec) me.active = false;
     }
 
-    function reconcileLocalPlayer(pb, epoch) {
+    function reconcileLocalState(pb, bSrv, epoch) {
       const srvX = pb[1], srvY = pb[2], ackCt = pb[5];
       me.st = pb[4];
       if (me.st !== lastStam) {
@@ -474,33 +480,53 @@ const CLIENT_HTML = `<!DOCTYPE html>
       }
 
       if (!me.active || epoch !== me.epoch) {
-        me.x = srvX; me.y = srvY;
-        me.epoch = epoch; me.active = true;
-        predHist.length = 0;
+        me.x = srvX; me.y = srvY; me.epoch = epoch; me.active = true;
+        ball.x = bSrv[0]; ball.y = bSrv[1]; ball.vx = bSrv[2]; ball.vy = bSrv[3];
+        ball.epoch = epoch; ball.init = true;
+        predHist.length = 0; ballHist.length = 0;
         return;
       }
 
       const targetTime = ackCt > 0 ? ackCt : (performance.now() - pingMs);
+
+      // 1. Reconciliar jugador local
       let past = null;
       for (let i = predHist.length - 1; i >= 0; i--) {
         if (predHist[i].t <= targetTime) { past = predHist[i]; break; }
       }
       if (!past && predHist.length) past = predHist[0];
-      if (!past) return;
+      if (past) {
+        const errX = srvX - past.x, errY = srvY - past.y;
+        const errDist = Math.hypot(errX, errY);
+        if (errDist > 75) {
+          me.x = srvX; me.y = srvY; predHist.length = 0;
+        } else if (errDist > 1.5) {
+          const cx = errX * 0.3, cy = errY * 0.3;
+          me.x += cx; me.y += cy;
+          for (let i = 0; i < predHist.length; i++) { predHist[i].x += cx; predHist[i].y += cy; }
+        }
+      }
 
-      const errX = srvX - past.x;
-      const errY = srvY - past.y;
-      const errDist = Math.hypot(errX, errY);
-
-      if (errDist > 75) {
-        me.x = srvX; me.y = srvY;
-        predHist.length = 0;
-      } else if (errDist > 1.8) {
-        const cx = errX * 0.28, cy = errY * 0.28;
-        me.x += cx; me.y += cy;
-        for (let i = 0; i < predHist.length; i++) {
-          predHist[i].x += cx;
-          predHist[i].y += cy;
+      // 2. Reconciliar pelota en la misma línea temporal que el jugador
+      let pastB = null;
+      for (let i = ballHist.length - 1; i >= 0; i--) {
+        if (ballHist[i].t <= targetTime) { pastB = ballHist[i]; break; }
+      }
+      if (!pastB && ballHist.length) pastB = ballHist[0];
+      if (pastB) {
+        const bxErr = bSrv[0] - pastB.x, byErr = bSrv[1] - pastB.y;
+        const bDist = Math.hypot(bxErr, byErr);
+        const nearMe = Math.hypot(me.x - ball.x, me.y - ball.y) < 60;
+        if (bDist > 90) {
+          ball.x = bSrv[0]; ball.y = bSrv[1]; ball.vx = bSrv[2]; ball.vy = bSrv[3];
+          ballHist.length = 0;
+        } else if (bDist > (nearMe ? 2.5 : 0.8)) {
+          const blend = nearMe ? 0.25 : 0.45;
+          const cx = bxErr * blend, cy = byErr * blend;
+          ball.x += cx; ball.y += cy;
+          ball.vx += (bSrv[2] - ball.vx) * 0.35;
+          ball.vy += (bSrv[3] - ball.vy) * 0.35;
+          for (let i = 0; i < ballHist.length; i++) { ballHist[i].x += cx; ballHist[i].y += cy; }
         }
       }
     }
@@ -517,7 +543,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
       }
       for (let i = 0; i < m.p.length; i++) {
         if (m.p[i][0] === myId) {
-          reconcileLocalPlayer(m.p[i], m.z);
+          reconcileLocalState(m.p[i], m.b, m.z);
           break;
         }
       }
@@ -681,6 +707,35 @@ const CLIENT_HTML = `<!DOCTYPE html>
       return meta.adv[0] === tIdx && meta.adv[1] === advIndex;
     }
 
+    function constrainBallClient(b, posts) {
+      for (let q = 0; q < 4; q++) {
+        const dx = b.x - posts[q][0], dy = b.y - posts[q][1];
+        const dSq = dx * dx + dy * dy, min = 18;
+        if (dSq < min * min && dSq > 0) {
+          const d = Math.sqrt(dSq), nx = dx / d, ny = dy / d;
+          b.x = posts[q][0] + nx * min;
+          b.y = posts[q][1] + ny * min;
+          const vn = b.vx * nx + b.vy * ny;
+          if (vn < 0) { b.vx -= 1.82 * vn * nx; b.vy -= 1.82 * vn * ny; }
+        }
+      }
+      const lt = CY - meta.gl, lb = CY + meta.gl, rt = CY - meta.gr, rb = CY + meta.gr;
+      if (b.x < L) {
+        if (b.y - 10 < lt) { b.y = lt + 10; b.vy *= -0.3; }
+        if (b.y + 10 > lb) { b.y = lb - 10; b.vy *= -0.3; }
+        if (b.x - 10 < 28) { b.x = 38; b.vx *= -0.3; }
+      } else if (b.x > R) {
+        if (b.y - 10 < rt) { b.y = rt + 10; b.vy *= -0.3; }
+        if (b.y + 10 > rb) { b.y = rb - 10; b.vy *= -0.3; }
+        if (b.x + 10 > 812) { b.x = 802; b.vx *= -0.3; }
+      } else {
+        if (b.y - 10 < T) { b.y = T + 10; b.vy *= -BALL_BOUNCE; }
+        if (b.y + 10 > B) { b.y = B - 10; b.vy *= -BALL_BOUNCE; }
+        if (!(b.y > lt && b.y < lb) && b.x - 10 < L) { b.x = L + 10; b.vx *= -BALL_BOUNCE; }
+        if (!(b.y > rt && b.y < rb) && b.x + 10 > R) { b.x = R - 10; b.vx *= -BALL_BOUNCE; }
+      }
+    }
+
     function stepLocalPrediction(ts, dt) {
       if (!me.active || myTeam === 'spec') return;
       const dtTicks = dt / TICK_MS;
@@ -688,43 +743,107 @@ const CLIENT_HTML = `<!DOCTYPE html>
       const infStam = hasAdv(myTeam, 2);
       const turbo = hasAdv(myTeam, 5);
       const isGiant = hasAdv(myTeam, 4);
+      const hasPower = hasAdv(myTeam, 1);
       const rad = isGiant ? GIANT_R : PLAYER_R;
 
-      // Sin reducción de velocidad al chutar (puedes caminar y esprintar mientras chutas)
+      if (!cur.k) { me.canKick = true; me.kicking = false; }
+      else if (me.canKick) me.kicking = true;
+
       const sprinting = cur.s && moving && (me.st > 0 || infStam);
       let speed = sprinting ? SPRINT_SPEED : WALK_SPEED;
       if (turbo) speed *= SPEED_MULT;
 
-      if (moving) {
-        const diag = (cur.x !== 0 && cur.y !== 0) ? 0.70710678 : 1;
-        me.x += cur.x * speed * diag * dtTicks;
-        me.y += cur.y * speed * diag * dtTicks;
+      const diag = (cur.x !== 0 && cur.y !== 0) ? 0.70710678 : 1;
+      me.vx = moving ? cur.x * speed * diag : 0;
+      me.vy = moving ? cur.y * speed * diag : 0;
+      me.x += me.vx * dtTicks;
+      me.y += me.vy * dtTicks;
+
+      // Chut predicho en 0 ms
+      const maxKickDist = rad + 10 + 4.5;
+      if (me.kicking && me.canKick) {
+        const kdx = ball.x - me.x, kdy = ball.y - me.y, kdist = Math.hypot(kdx, kdy);
+        if (kdist <= maxKickDist && kdist > 0) {
+          const pwr = KICK_POWER * (hasPower ? POWER_MULT : 1);
+          ball.vx += (kdx / kdist) * pwr;
+          ball.vy += (kdy / kdist) * pwr;
+          me.canKick = false;
+          me.kicking = false;
+        }
       }
+
+      // Avance físico local de la pelota en la misma línea temporal
+      ball.x += ball.vx * dtTicks;
+      ball.y += ball.vy * dtTicks;
+      const damp = Math.pow(BALL_DAMPING, dtTicks);
+      ball.vx *= damp;
+      ball.vy *= damp;
 
       const posts = [
         [L, CY - meta.gl], [L, CY + meta.gl],
         [R, CY - meta.gr], [R, CY + meta.gr]
       ];
-      for (let i = 0; i < 4; i++) {
-        const dx = me.x - posts[i][0], dy = me.y - posts[i][1];
-        const dSq = dx * dx + dy * dy, min = rad + 8;
-        if (dSq < min * min && dSq > 0) {
+
+      // 3 pasadas de colisión Jugador <-> Pelota + Paredes (imposibilita que la pelota entre en el jugador)
+      for (let iter = 0; iter < 3; iter++) {
+        const dx = ball.x - me.x, dy = ball.y - me.y;
+        const dSq = dx * dx + dy * dy, min = rad + 10;
+        if (dSq < min * min) {
           const d = Math.sqrt(dSq);
-          me.x = posts[i][0] + (dx / d) * min;
-          me.y = posts[i][1] + (dy / d) * min;
+          const nx = d === 0 ? 1 : dx / d, ny = d === 0 ? 0 : dy / d;
+          const ov = min - d;
+          me.x -= nx * ov * (1 / 3);
+          me.y -= ny * ov * (1 / 3);
+          ball.x += nx * ov * (2 / 3);
+          ball.y += ny * ov * (2 / 3);
+          const vn = (ball.vx - me.vx) * nx + (ball.vy - me.vy) * ny;
+          if (vn < 0) {
+            ball.vx -= vn * nx;
+            ball.vy -= vn * ny;
+          }
         }
+
+        constrainBallClient(ball, posts);
+
+        // Si la pelota quedó atrapada contra pared/poste, empujar al jugador hacia afuera al 100%
+        const dx2 = ball.x - me.x, dy2 = ball.y - me.y;
+        const dSq2 = dx2 * dx2 + dy2 * dy2;
+        if (dSq2 < min * min && dSq2 > 0) {
+          const d2 = Math.sqrt(dSq2);
+          me.x = ball.x - (dx2 / d2) * min;
+          me.y = ball.y - (dy2 / d2) * min;
+        }
+
+        for (let i = 0; i < 4; i++) {
+          const pdx = me.x - posts[i][0], pdy = me.y - posts[i][1];
+          const pdSq = pdx * pdx + pdy * pdy, pmin = rad + 8;
+          if (pdSq < pmin * pmin && pdSq > 0) {
+            const pd = Math.sqrt(pdSq);
+            me.x = posts[i][0] + (pdx / pd) * pmin;
+            me.y = posts[i][1] + (pdy / pd) * pmin;
+          }
+        }
+        me.x = Math.max(rad, Math.min(W - rad, me.x));
+        me.y = Math.max(rad, Math.min(H - rad, me.y));
       }
-      me.x = Math.max(rad, Math.min(W - rad, me.x));
-      me.y = Math.max(rad, Math.min(H - rad, me.y));
+
+      const sp2 = ball.vx * ball.vx + ball.vy * ball.vy;
+      if (sp2 < BALL_STOP * BALL_STOP) { ball.vx = 0; ball.vy = 0; }
+      else if (sp2 > BALL_MAX * BALL_MAX) {
+        const s = BALL_MAX / Math.sqrt(sp2); ball.vx *= s; ball.vy *= s;
+      }
 
       predHist.push({ t: ts, x: me.x, y: me.y });
       while (predHist.length > 90) predHist.shift();
+
+      ballHist.push({ t: ts, x: ball.x, y: ball.y });
+      while (ballHist.length > 90) ballHist.shift();
 
       let rp = rps.get(myId);
       if (!rp) { rp = { id: myId, x: me.x, y: me.y, f: 0, st: me.st, ta: 0, mark: 0 }; rps.set(myId, rp); }
       rp.x = me.x;
       rp.y = me.y;
-      rp.f = (cur.k ? 1 : 0) | (sprinting ? 2 : 0);
+      rp.f = (me.kicking ? 1 : 0) | (sprinting ? 2 : 0);
       rp.st = me.st;
       rp.mark = frameNo + 1;
     }
@@ -757,10 +876,12 @@ const CLIENT_HTML = `<!DOCTYPE html>
       }
       if (a.z !== b.z) { a = b; k = 0; }
 
-      ball.x = a.b[0] + (b.b[0] - a.b[0]) * k;
-      ball.y = a.b[1] + (b.b[1] - a.b[1]) * k;
-
-      stepLocalPrediction(ts, dt);
+      if (!me.active || myTeam === 'spec') {
+        ball.x = a.b[0] + (b.b[0] - a.b[0]) * k;
+        ball.y = a.b[1] + (b.b[1] - a.b[1]) * k;
+      } else {
+        stepLocalPrediction(ts, dt);
+      }
 
       frameNo++;
       for (let i = 0; i < b.p.length; i++) {
@@ -1069,6 +1190,24 @@ function timeUp() {
   else { match.overtime = true; sendMeta(); }
 }
 
+function constrainBallServer(lt, lb, rt, rb) {
+  for (let q = 0; q < 4; q++) collide(ball, posts[q]);
+  if (ball.x < L) {
+    if (ball.y - 10 < lt) { ball.y = lt + 10; ball.vy *= -0.3; }
+    if (ball.y + 10 > lb) { ball.y = lb - 10; ball.vy *= -0.3; }
+    if (ball.x - 10 < 28) { ball.x = 38; ball.vx *= -0.3; }
+  } else if (ball.x > R) {
+    if (ball.y - 10 < rt) { ball.y = rt + 10; ball.vy *= -0.3; }
+    if (ball.y + 10 > rb) { ball.y = rb - 10; ball.vy *= -0.3; }
+    if (ball.x + 10 > 812) { ball.x = 802; ball.vx *= -0.3; }
+  } else {
+    if (ball.y - 10 < T) { ball.y = T + 10; ball.vy *= -TUNE.ballBounce; }
+    if (ball.y + 10 > B) { ball.y = B - 10; ball.vy *= -TUNE.ballBounce; }
+    if (!(ball.y > lt && ball.y < lb) && ball.x - 10 < L) { ball.x = L + 10; ball.vx *= -TUNE.ballBounce; }
+    if (!(ball.y > rt && ball.y < rb) && ball.x + 10 > R) { ball.x = R - 10; ball.vx *= -TUNE.ballBounce; }
+  }
+}
+
 function stepPhysics() {
   tick++;
   const adv = match.adv;
@@ -1082,7 +1221,6 @@ function stepPhysics() {
     const infStamina = adv !== null && adv.id === 'stamina' && adv.team === p.team;
     const hasTurbo = adv !== null && adv.id === 'speed' && adv.team === p.team;
 
-    // Sin bloqueo de esprint ni reducción de velocidad al mantener pulsado chutar
     if (p.is && moving && (p.stamina > 0 || infStamina)) {
       p.sprinting = true;
       p.stamina = infStamina ? 100 : Math.max(0, p.stamina - TUNE.staminaDrain);
@@ -1112,30 +1250,30 @@ function stepPhysics() {
   }
   ball.integrate();
 
-  for (let i = 0; i < plist.length; i++) {
-    const di = plist[i].disc;
-    for (let j = i + 1; j < plist.length; j++) collide(di, plist[j].disc);
-    if (collide(di, ball)) match.lastTouch = plist[i].name;
-    for (let q = 0; q < 4; q++) collide(di, posts[q]);
-    di.x = Math.max(di.radius, Math.min(840 - di.radius, di.x));
-    di.y = Math.max(di.radius, Math.min(420 - di.radius, di.y));
-  }
-  for (let q = 0; q < 4; q++) collide(ball, posts[q]);
-
   const lt = CY - goals.l, lb = CY + goals.l, rt = CY - goals.r, rb = CY + goals.r;
-  if (ball.x < L) {
-    if (ball.y - 10 < lt) { ball.y = lt + 10; ball.vy *= -0.3; }
-    if (ball.y + 10 > lb) { ball.y = lb - 10; ball.vy *= -0.3; }
-    if (ball.x - 10 < 28) { ball.x = 38; ball.vx *= -0.3; }
-  } else if (ball.x > R) {
-    if (ball.y - 10 < rt) { ball.y = rt + 10; ball.vy *= -0.3; }
-    if (ball.y + 10 > rb) { ball.y = rb - 10; ball.vy *= -0.3; }
-    if (ball.x + 10 > 812) { ball.x = 802; ball.vx *= -0.3; }
-  } else {
-    if (ball.y - 10 < T) { ball.y = T + 10; ball.vy *= -TUNE.ballBounce; }
-    if (ball.y + 10 > B) { ball.y = B - 10; ball.vy *= -TUNE.ballBounce; }
-    if (!(ball.y > lt && ball.y < lb) && ball.x - 10 < L) { ball.x = L + 10; ball.vx *= -TUNE.ballBounce; }
-    if (!(ball.y > rt && ball.y < rb) && ball.x + 10 > R) { ball.x = R - 10; ball.vx *= -TUNE.ballBounce; }
+
+  // 3 iteraciones de resolución para que la pelota jamás atraviese a un jugador contra una pared o poste
+  for (let iter = 0; iter < 3; iter++) {
+    for (let i = 0; i < plist.length; i++) {
+      const di = plist[i].disc;
+      for (let j = i + 1; j < plist.length; j++) collide(di, plist[j].disc);
+      if (collide(di, ball)) match.lastTouch = plist[i].name;
+      for (let q = 0; q < 4; q++) collide(di, posts[q]);
+      di.x = Math.max(di.radius, Math.min(840 - di.radius, di.x));
+      di.y = Math.max(di.radius, Math.min(420 - di.radius, di.y));
+    }
+    constrainBallServer(lt, lb, rt, rb);
+
+    for (let i = 0; i < plist.length; i++) {
+      const di = plist[i].disc;
+      const dx = ball.x - di.x, dy = ball.y - di.y;
+      const dSq = dx * dx + dy * dy, min = di.radius + ball.radius;
+      if (dSq < min * min && dSq > 0) {
+        const d = Math.sqrt(dSq);
+        di.x = ball.x - (dx / d) * min;
+        di.y = ball.y - (dy / d) * min;
+      }
+    }
   }
 
   const sp2 = ball.vx * ball.vx + ball.vy * ball.vy;
@@ -1205,10 +1343,11 @@ function chooseTeam(pref) {
 }
 
 const r1 = (v) => Math.round(v * 10) / 10;
+const r2 = (v) => Math.round(v * 100) / 100;
 function buildState() {
   let s = '{"type":"STATE","n":' + tick + ',"z":' + epoch + ',"st":' + match.state + ',"t":' + clockSeconds()
     + ',"rc":' + (match.state === 1 ? (match.resetTicks / 60).toFixed(1) : 0)
-    + ',"b":[' + r1(ball.x) + ',' + r1(ball.y) + '],"p":[';
+    + ',"b":[' + r1(ball.x) + ',' + r1(ball.y) + ',' + r2(ball.vx) + ',' + r2(ball.vy) + '],"p":[';
   for (let i = 0; i < plist.length; i++) {
     const p = plist[i];
     const ack = p.baseCt > 0 ? Math.round(p.baseCt + (tick - p.baseTick) * FIXED_DT) : 0;
