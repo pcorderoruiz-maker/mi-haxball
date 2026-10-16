@@ -19,13 +19,17 @@ const TUNE = {
   staminaRegen: 0.45,    // recuperación por tick
   kickPower: 5.0,        // fuerza del chut
   kickRange: 29.5,
-  ballDamping: 0.983,    // rozamiento de la pelota por tick: es lo que hace que SE PARE sola
+  ballDamping: 0.983,    // rozamiento de la pelota por tick: hace que se pare sola
   ballStopSpeed: 0.05,   // por debajo de esta velocidad la pelota se detiene del todo
   ballMaxSpeed: 8,
   ballBounce: 0.75,      // rebote contra las bandas
-  goalHalf: 65,          // medio alto de la portería
-  wideGoalHalf: 91,      // medio alto con la ventaja "portería ancha" (+40 %)
-  powerMult: 1.45,       // multiplicador del chut con la ventaja "chute potente"
+  playerRadius: 15,      // radio normal del jugador
+  giantRadius: 22,       // radio con la ventaja "jugadores gigantes"
+  goalHalf: 65,          // medio alto de la portería normal
+  wideGoalHalf: 91,      // medio alto con la ventaja "portería rival ancha" (+40 %)
+  smallGoalHalf: 40,     // medio alto con la ventaja "portería propia blindada" (-40 %)
+  powerMult: 1.45,       // multiplicador con la ventaja "chute potente"
+  speedMult: 1.30,       // multiplicador con la ventaja "velocidad turbo" (+30 %)
   celebrationTicks: 180, // 3 s tras un gol
   endTicks: 420          // 7 s mostrando el ganador
 };
@@ -45,35 +49,39 @@ const CLIENT_HTML = `<!DOCTYPE html>
     :fullscreen .game-wrapper,
     :-webkit-full-screen .game-wrapper { width: min(94vw, calc((100vh - 90px) * 2)); max-width: 1600px; }
 
-    .scoreboard-bar { display: flex; align-items: center; justify-content: space-between; width: 100%; background: #1e242b; border: 2px solid #2f3844; border-bottom: none; border-radius: 10px 10px 0 0; padding: 8px 18px; }
-    .score-group { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; }
+    .scoreboard-bar { display: flex; align-items: center; justify-content: space-between; width: 100%; background: #1e242b; border: 2px solid #2f3844; border-bottom: none; border-radius: 10px 10px 0 0; padding: 8px 14px; gap: 8px; }
+    .score-group { display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 800; }
     .badge { width: 20px; height: 20px; border-radius: 4px; border: 2px solid #fff; }
     .badge.red { background: #e56e56; }
     .badge.blue { background: #5689e5; }
-    .clock-box { display: flex; align-items: baseline; font-family: monospace; font-size: 24px; font-weight: 700; background: #111519; padding: 4px 16px; border-radius: 6px; border: 1px solid #2e3743; }
+    .clock-box { display: flex; align-items: baseline; font-family: monospace; font-size: 24px; font-weight: 700; background: #111519; padding: 4px 14px; border-radius: 6px; border: 1px solid #2e3743; }
     .mode-tag { margin-left: 10px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11px; font-weight: 700; color: #94a3b8; }
     .mode-tag.gold { color: #fbbf24; }
 
-    .right-controls { display: flex; align-items: center; gap: 14px; }
-    .stamina-hud { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: #cbd5e1; }
-    .stamina-bar-bg { width: 70px; height: 10px; background: #0f141a; border-radius: 99px; border: 1px solid #334155; overflow: hidden; }
+    .right-controls { display: flex; align-items: center; gap: 10px; }
+    .stamina-hud { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: #cbd5e1; }
+    .stamina-bar-bg { width: 64px; height: 10px; background: #0f141a; border-radius: 99px; border: 1px solid #334155; overflow: hidden; }
     .stamina-bar-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24); }
 
-    .net-status { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
+    .net-status { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 5px; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; }
     .dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
     .dot.off { background: #ef4444; }
 
-    .fs-btn { background: #283240; color: #f1f5f9; border: 1px solid #3e4c63; border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer; transition: background 0.15s; }
-    .fs-btn:hover { background: #364457; }
+    .top-btn { background: #283240; color: #f1f5f9; border: 1px solid #3e4c63; border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 700; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+    .top-btn:hover { background: #364457; }
+    .top-btn.spec-active { background: #475569; border-color: #fbbf24; color: #fde68a; }
 
     .stage { position: relative; width: 100%; aspect-ratio: 2 / 1; border: 2px solid #2f3844; border-radius: 0 0 10px 10px; overflow: hidden; box-shadow: 0 18px 45px rgba(0,0,0,0.65); contain: layout paint; }
     canvas#c { display: block; width: 100%; height: 100%; background: #0b0f14; }
 
-    .adv-chip { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: none; padding: 4px 14px; border-radius: 999px; font-size: 13px; font-weight: 800; white-space: nowrap; background: rgba(10,14,20,0.8); border: 2px solid #fff; pointer-events: none; }
+    .adv-chip { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: none; padding: 4px 14px; border-radius: 999px; font-size: 13px; font-weight: 800; white-space: nowrap; background: rgba(10,14,20,0.85); border: 2px solid #fff; pointer-events: none; z-index: 4; }
     .adv-chip.show { display: block; }
     .adv-chip.red { border-color: #e56e56; }
     .adv-chip.blue { border-color: #5689e5; }
+
+    .spec-pill { position: absolute; bottom: 10px; left: 12px; display: none; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; background: rgba(15,23,42,0.85); border: 1px solid #64748b; color: #e2e8f0; pointer-events: none; z-index: 4; }
+    .spec-pill.show { display: block; }
 
     .goal-banner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transition: opacity 0.2s; background: radial-gradient(circle, rgba(0,0,0,0.45) 0%, transparent 70%); }
     .goal-banner.active { opacity: 1; }
@@ -85,15 +93,16 @@ const CLIENT_HTML = `<!DOCTYPE html>
 
     .lobby { position: absolute; inset: 0; background: rgba(12,16,22,0.75); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 10; overflow: auto; }
     .lobby.hidden { display: none; }
-    .card { width: 340px; background: #181e26; border: 1px solid #334155; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+    .card { width: 370px; background: #181e26; border: 1px solid #334155; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 14px; }
     .card.wide { width: min(660px, 96%); padding: 14px 18px; gap: 10px; }
     .card h1 { font-size: 20px; text-align: center; }
     .input { background: #0f141a; border: 1px solid #334155; color: #fff; padding: 10px 12px; border-radius: 8px; font-size: 15px; outline: none; }
-    .teams { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    .t-btn { padding: 8px; border-radius: 7px; border: 1px solid #334155; background: #161d26; color: #fff; font-weight: 700; cursor: pointer; }
+    .teams { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .t-btn { padding: 8px 4px; border-radius: 7px; border: 1px solid #334155; background: #161d26; color: #fff; font-weight: 700; font-size: 12px; cursor: pointer; }
     .t-btn.active[data-team="auto"] { background: #475569; border-color: #fff; }
     .t-btn.active[data-team="red"] { background: #e56e56; border-color: #fff; }
     .t-btn.active[data-team="blue"] { background: #5689e5; border-color: #fff; }
+    .t-btn.active[data-team="spec"] { background: #64748b; border-color: #fbbf24; color: #fde68a; }
     .join-btn { background: #2ecc71; color: #09130c; font-weight: 800; font-size: 15px; padding: 11px; border: none; border-radius: 8px; cursor: pointer; }
     .footer { margin-top: 10px; font-size: 12px; color: #94a3b8; text-align: center; }
     kbd { background: #262f3d; padding: 2px 6px; border-radius: 4px; border: 1px solid #3e4c63; font-size: 11px; color: #e2e8f0; }
@@ -126,18 +135,20 @@ const CLIENT_HTML = `<!DOCTYPE html>
       <div class="clock-box"><span id="clock">00:00</span><span class="mode-tag" id="modeTag"></span></div>
 
       <div class="right-controls">
-        <div class="stamina-hud" title="Energía de Esprint (Shift)">
+        <div class="stamina-hud" id="staminaHud" title="Energía de Esprint (Shift)">
           <span>⚡</span>
           <div class="stamina-bar-bg"><div class="stamina-bar-fill" id="staminaFill"></div></div>
         </div>
+        <button type="button" class="top-btn" id="specBtn" style="display:none">👁 Espectador</button>
         <div class="net-status"><div class="dot" id="dot"></div><span id="status">Conectando...</span></div>
-        <button type="button" class="fs-btn" id="fsBtn">⛶ Pantalla Completa</button>
+        <button type="button" class="top-btn" id="fsBtn">⛶ Pantalla Completa</button>
       </div>
     </div>
 
     <div class="stage" id="stage">
       <canvas id="c" width="840" height="420"></canvas>
       <div class="adv-chip" id="advChip"></div>
+      <div class="spec-pill" id="specPill">👁 Modo Espectador (pulsa "⚽ Jugar" arriba para entrar al campo)</div>
       <div class="goal-banner" id="gBanner">
         <div class="goal-title" id="gTitle"></div>
         <div class="goal-sub" id="gSub"></div>
@@ -152,8 +163,9 @@ const CLIENT_HTML = `<!DOCTYPE html>
             <button type="button" class="t-btn active" data-team="auto">Auto</button>
             <button type="button" class="t-btn" data-team="red">Rojo</button>
             <button type="button" class="t-btn" data-team="blue">Azul</button>
+            <button type="button" class="t-btn" data-team="spec">👁 Ver</button>
           </div>
-          <button type="submit" class="join-btn">Entrar a la Cancha</button>
+          <button type="submit" class="join-btn">Entrar a la Sala</button>
         </form>
       </div>
 
@@ -176,7 +188,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
 
     <div class="footer">
       Moverse: <kbd>WASD</kbd> o <kbd>Flechas</kbd> &nbsp;|&nbsp;
-      Esprintar (más velocidad): <kbd>Shift</kbd> &nbsp;|&nbsp;
+      Esprintar: <kbd>Shift</kbd> &nbsp;|&nbsp;
       Chutar: <kbd>Espacio</kbd> o <kbd>X</kbd> &nbsp;|&nbsp;
       Pantalla Completa: <kbd>F</kbd>
     </div>
@@ -188,13 +200,25 @@ const CLIENT_HTML = `<!DOCTYPE html>
     const $ = (id) => document.getElementById(id);
     const W = 840, H = 420, L = 70, R = 770, T = 35, B = 385, CX = 420, CY = 210, TAU = Math.PI * 2;
     const TICK_MS = 1000 / 60;
-    const BUFFER_TICKS = 3.0; // 50 ms de colchón constante: absorbe cualquier variación de red
+    const BUFFER_TICKS = 2.0; // Buffer corto para rivales y pelota
 
+    // Constantes físicas sincronizadas con el servidor para predicción en 0 ms
+    const WALK_SPEED = ${TUNE.walkSpeed};
+    const SPRINT_SPEED = ${TUNE.sprintSpeed};
+    const KICK_SPEED = ${TUNE.kickingSpeed};
+    const SPEED_MULT = ${TUNE.speedMult};
+    const PLAYER_R = ${TUNE.playerRadius};
+    const GIANT_R = ${TUNE.giantRadius};
+
+    // 7 Ventajas (4 originales + 3 nuevas)
     const ADV = [
       { icon: '🥅', name: 'Portería rival más ancha' },
       { icon: '💥', name: 'Chute potente' },
       { icon: '⚡', name: 'Esprint infinito' },
-      { icon: '✨', name: 'Gol doble' }
+      { icon: '✨', name: 'Gol doble' },
+      { icon: '🛡️', name: 'Jugadores gigantes' },
+      { icon: '🚀', name: 'Velocidad turbo' },
+      { icon: '🧱', name: 'Portería propia blindada' }
     ];
     const TEAM_NAME = ['ROJO', 'AZUL'];
 
@@ -335,7 +359,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       g.restore();
     }
 
-    // Caché de nombres en un mini-canvas por jugador (evita strokeText en cada frame)
     function makeNameBadge(text) {
       const c = document.createElement('canvas');
       c.width = 128; c.height = 22;
@@ -349,7 +372,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
       return c;
     }
 
-    let myId = null, hostId = 0, team = 'auto', pingMs = 0, lastPingSent = 0, curSt = 2;
+    let myId = null, myTeam = 'auto', hostId = 0, team = 'auto', pingMs = 0, lastPingSent = 0, curSt = 2;
     const meta = { sr: 0, sb: 0, lt: null, ln: '', adv: null, gl: 65, gr: 65, map: 0, mode: 0, limit: 10, ot: 0, w: null };
     const roster = new Map();
     const snaps = [];
@@ -359,11 +382,16 @@ const CLIENT_HTML = `<!DOCTYPE html>
     let renderTick = null, frameNo = 0, goalL = 65, goalR = 65;
     let lastT = -1, lastStam = -1, lastSub = '';
 
+    // Estado de predicción en 0 ms del jugador local + historial temporal para reconciliación sin tirones
+    const me = { x: CX, y: CY, st: 100, epoch: -1, active: false };
+    const predHist = []; // [{ t, x, y }]
+
     const canvas = $('c');
     const ctx = canvas.getContext('2d', { alpha: false });
     const clockEl = $('clock'), modeTag = $('modeTag'), staminaFill = $('staminaFill');
     const statusEl = $('status'), dot = $('dot'), advChip = $('advChip'), nickEl = $('nick');
     const setupEl = $('setup'), startBtn = $('startBtn'), hostNote = $('hostNote'), chipsEl = $('chips'), optLabel = $('optLabel');
+    const specBtn = $('specBtn'), specPill = $('specPill'), staminaHud = $('staminaHud');
 
     const fsBtn = $('fsBtn');
     function toggleFullscreen() {
@@ -372,16 +400,28 @@ const CLIENT_HTML = `<!DOCTYPE html>
     }
     fsBtn.onclick = () => { toggleFullscreen(); fsBtn.blur(); };
     document.addEventListener('fullscreenchange', () => {
-      fsBtn.textContent = document.fullscreenElement ? '✕ Salir Pantalla Completa' : '⛶ Pantalla Completa';
+      fsBtn.textContent = document.fullscreenElement ? '✕ Salir' : '⛶ Pantalla Completa';
     });
+
+    // Botón para alternar Modo Espectador <-> Jugar en cualquier momento
+    specBtn.onclick = () => {
+      if (ws.readyState === 1 && myId !== null) {
+        const nextTeam = myTeam === 'spec' ? 'auto' : 'spec';
+        ws.send(JSON.stringify({ type: 'TEAM', team: nextTeam }));
+      }
+      specBtn.blur();
+    };
 
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host);
     ws.onopen = () => {
       dot.classList.add('online');
       statusEl.textContent = 'Online';
       setInterval(() => {
-        if (ws.readyState === 1) { lastPingSent = performance.now(); ws.send('{"type":"PING"}'); }
-      }, 2000);
+        if (ws.readyState === 1) {
+          lastPingSent = performance.now();
+          ws.send('{"type":"PING","ct":' + Math.round(lastPingSent) + '}');
+        }
+      }, 1000);
     };
     ws.onclose = () => { dot.classList.remove('online'); dot.classList.add('off'); statusEl.textContent = 'Desconectado'; };
 
@@ -396,10 +436,22 @@ const CLIENT_HTML = `<!DOCTYPE html>
           break;
         case 'ROSTER':
           roster.clear();
-          for (const r of m.p) roster.set(r[0], { name: r[1], team: r[2], badge: makeNameBadge(r[1]) });
-          hostId = m.host; renderSetup();
+          for (const r of m.p) {
+            roster.set(r[0], { name: r[1], team: r[2], badge: makeNameBadge(r[1]) });
+            if (r[0] === myId) myTeam = r[2];
+          }
+          hostId = m.host;
+          updateSpecUI();
+          renderSetup();
           break;
-        case 'JOINED': myId = m.playerId; updateOverlays(); renderSetup(); break;
+        case 'JOINED':
+          myId = m.playerId;
+          myTeam = m.team;
+          specBtn.style.display = '';
+          updateSpecUI();
+          updateOverlays();
+          renderSetup();
+          break;
         case 'KICK_FX': fx.push({ x: m.x, y: m.y, life: 260 }); break;
         case 'PONG':
           pingMs = Math.round(performance.now() - lastPingSent);
@@ -408,19 +460,71 @@ const CLIENT_HTML = `<!DOCTYPE html>
       }
     };
 
+    function updateSpecUI() {
+      const isSpec = myTeam === 'spec';
+      specBtn.textContent = isSpec ? '⚽ Entrar a Jugar' : '👁 Modo Espectador';
+      specBtn.classList.toggle('spec-active', isSpec);
+      specPill.classList.toggle('show', isSpec && curSt !== 2);
+      staminaHud.style.display = isSpec ? 'none' : 'flex';
+      if (isSpec) me.active = false;
+    }
+
+    function reconcileLocalPlayer(pb, epoch) {
+      const srvX = pb[1], srvY = pb[2], ackCt = pb[5];
+      me.st = pb[4];
+      if (me.st !== lastStam) {
+        lastStam = me.st;
+        staminaFill.style.width = lastStam + '%';
+      }
+
+      if (!me.active || epoch !== me.epoch) {
+        me.x = srvX; me.y = srvY;
+        me.epoch = epoch; me.active = true;
+        predHist.length = 0;
+        return;
+      }
+
+      // Buscar dónde estaba nuestro jugador local en el instante exacto (ackCt) que acaba de simular el servidor
+      const targetTime = ackCt > 0 ? ackCt : (performance.now() - pingMs);
+      let past = null;
+      for (let i = predHist.length - 1; i >= 0; i--) {
+        if (predHist[i].t <= targetTime) { past = predHist[i]; break; }
+      }
+      if (!past && predHist.length) past = predHist[0];
+      if (!past) return;
+
+      const errX = srvX - past.x;
+      const errY = srvY - past.y;
+      const errDist = Math.hypot(errX, errY);
+
+      if (errDist > 75) {
+        me.x = srvX; me.y = srvY;
+        predHist.length = 0;
+      } else if (errDist > 1.8) {
+        // Solo corrige si hubo choque con balón u otro jugador, desplazando también el historial para no rebotar
+        const cx = errX * 0.28, cy = errY * 0.28;
+        me.x += cx; me.y += cy;
+        for (let i = 0; i < predHist.length; i++) {
+          predHist[i].x += cx;
+          predHist[i].y += cy;
+        }
+      }
+    }
+
     function onState(m) {
       snaps.push({ n: m.n, z: m.z, b: m.b, p: m.p });
       if (snaps.length > 30) snaps.shift();
 
-      if (m.st !== curSt) { curSt = m.st; updateOverlays(); }
+      if (m.st !== curSt) { curSt = m.st; updateOverlays(); updateSpecUI(); }
       if (m.t !== lastT) { lastT = m.t; clockEl.textContent = fmt(m.t); }
       if (curSt === 1) {
         const txt = 'Gol de ' + meta.ln + ' • Saque en ' + m.rc.toFixed(1) + 's';
         if (txt !== lastSub) { lastSub = txt; $('gSub').textContent = txt; }
       }
       for (let i = 0; i < m.p.length; i++) {
-        if (m.p[i][0] === myId && m.p[i][4] !== lastStam) {
-          lastStam = m.p[i][4]; staminaFill.style.width = lastStam + '%';
+        if (m.p[i][0] === myId) {
+          reconcileLocalPlayer(m.p[i], m.z);
+          break;
         }
       }
     }
@@ -557,7 +661,9 @@ const CLIENT_HTML = `<!DOCTYPE html>
       const k = newest(KICK) ? 1 : 0, s = newest(SPRINT) ? 1 : 0;
       if (x === cur.x && y === cur.y && k === cur.k && s === cur.s) return;
       cur.x = x; cur.y = y; cur.k = k; cur.s = s;
-      if (ws.readyState === 1) ws.send('{"type":"INPUT","x":' + x + ',"y":' + y + ',"k":' + k + ',"s":' + s + '}');
+      if (ws.readyState === 1) {
+        ws.send('{"type":"INPUT","x":' + x + ',"y":' + y + ',"k":' + k + ',"s":' + s + ',"ct":' + Math.round(performance.now()) + '}');
+      }
     }
     window.addEventListener('keydown', (e) => {
       if (document.activeElement === nickEl) return;
@@ -575,8 +681,61 @@ const CLIENT_HTML = `<!DOCTYPE html>
     });
     window.addEventListener('blur', () => { for (const k in down) delete down[k]; pushInput(); });
 
-    // ───────── Reloj PLL continuo (nunca da saltos hacia atrás ni se queda seco) ─────────
-    function interpolate(dt) {
+    function hasAdv(teamName, advIndex) {
+      if (!meta.adv || curSt !== 0) return false;
+      const tIdx = teamName === 'red' ? 0 : 1;
+      return meta.adv[0] === tIdx && meta.adv[1] === advIndex;
+    }
+
+    function stepLocalPrediction(ts, dt) {
+      if (!me.active || myTeam === 'spec') return;
+      const dtTicks = dt / TICK_MS;
+      const moving = cur.x !== 0 || cur.y !== 0;
+      const infStam = hasAdv(myTeam, 2);
+      const turbo = hasAdv(myTeam, 5);
+      const isGiant = hasAdv(myTeam, 4);
+      const rad = isGiant ? GIANT_R : PLAYER_R;
+
+      const sprinting = cur.s && moving && !cur.k && (me.st > 0 || infStam);
+      let speed = cur.k ? KICK_SPEED : (sprinting ? SPRINT_SPEED : WALK_SPEED);
+      if (turbo) speed *= SPEED_MULT;
+
+      if (moving) {
+        const diag = (cur.x !== 0 && cur.y !== 0) ? 0.70710678 : 1;
+        me.x += cur.x * speed * diag * dtTicks;
+        me.y += cur.y * speed * diag * dtTicks;
+      }
+
+      // Colisión local con postes y bordes para que no haya tirones al rozar paredes
+      const posts = [
+        [L, CY - meta.gl], [L, CY + meta.gl],
+        [R, CY - meta.gr], [R, CY + meta.gr]
+      ];
+      for (let i = 0; i < 4; i++) {
+        const dx = me.x - posts[i][0], dy = me.y - posts[i][1];
+        const dSq = dx * dx + dy * dy, min = rad + 8;
+        if (dSq < min * min && dSq > 0) {
+          const d = Math.sqrt(dSq);
+          me.x = posts[i][0] + (dx / d) * min;
+          me.y = posts[i][1] + (dy / d) * min;
+        }
+      }
+      me.x = Math.max(rad, Math.min(W - rad, me.x));
+      me.y = Math.max(rad, Math.min(H - rad, me.y));
+
+      predHist.push({ t: ts, x: me.x, y: me.y });
+      while (predHist.length > 90) predHist.shift();
+
+      let rp = rps.get(myId);
+      if (!rp) { rp = { id: myId, x: me.x, y: me.y, f: 0, st: me.st, ta: 0, mark: 0 }; rps.set(myId, rp); }
+      rp.x = me.x;
+      rp.y = me.y;
+      rp.f = (cur.k ? 1 : 0) | (sprinting ? 2 : 0);
+      rp.st = me.st;
+      rp.mark = frameNo + 1;
+    }
+
+    function interpolate(ts, dt) {
       const n = snaps.length;
       if (!n) return;
       const last = snaps[n - 1];
@@ -585,9 +744,8 @@ const CLIENT_HTML = `<!DOCTYPE html>
       if (renderTick === null || Math.abs(targetTick - renderTick) > 8) {
         renderTick = targetTick;
       } else {
-        // Avanza exactamente al ritmo de los FPS del monitor + micro-ajuste del 2% hacia el centro del buffer
         const drift = targetTick - renderTick;
-        renderTick += (dt / TICK_MS) + drift * 0.025;
+        renderTick += (dt / TICK_MS) + drift * 0.03;
         if (renderTick > last.n) renderTick = last.n;
       }
 
@@ -603,18 +761,26 @@ const CLIENT_HTML = `<!DOCTYPE html>
         const span = b.n - a.n;
         k = span > 0 ? (renderTick - a.n) / span : 0;
       }
-      if (a.z !== b.z) { a = b; k = 0; } // teletransporte (saque): no deslizar
+      if (a.z !== b.z) { a = b; k = 0; }
 
       ball.x = a.b[0] + (b.b[0] - a.b[0]) * k;
       ball.y = a.b[1] + (b.b[1] - a.b[1]) * k;
 
+      stepLocalPrediction(ts, dt);
+
       frameNo++;
       for (let i = 0; i < b.p.length; i++) {
         const pb = b.p[i];
+        const id = pb[0];
+        if (id === myId && me.active && myTeam !== 'spec') {
+          const myRp = rps.get(myId);
+          if (myRp) myRp.mark = frameNo;
+          continue;
+        }
         let pa = pb;
-        if (a !== b) for (let j = 0; j < a.p.length; j++) if (a.p[j][0] === pb[0]) { pa = a.p[j]; break; }
-        let rp = rps.get(pb[0]);
-        if (!rp) { rp = { id: pb[0], x: pb[1], y: pb[2], f: 0, st: 100, ta: 0, mark: 0 }; rps.set(pb[0], rp); }
+        if (a !== b) for (let j = 0; j < a.p.length; j++) if (a.p[j][0] === id) { pa = a.p[j]; break; }
+        let rp = rps.get(id);
+        if (!rp) { rp = { id, x: pb[1], y: pb[2], f: 0, st: 100, ta: 0, mark: 0 }; rps.set(id, rp); }
         rp.x = pa[1] + (pb[1] - pa[1]) * k;
         rp.y = pa[2] + (pb[2] - pa[2]) * k;
         rp.f = pb[3]; rp.st = pb[4]; rp.mark = frameNo;
@@ -622,7 +788,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       for (const entry of rps) if (entry[1].mark !== frameNo) rps.delete(entry[0]);
     }
 
-    // ───────── Renderizado con caché estática ─────────
     let fieldCv = null, glowCv = null, fMap = -1, fCrest = -1;
 
     function rebuildField(mi) {
@@ -666,7 +831,6 @@ const CLIENT_HTML = `<!DOCTYPE html>
       drawPost(L, CY - goalL, '#ef4444'); drawPost(L, CY + goalL, '#ef4444');
       drawPost(R, CY - goalR, '#3b82f6'); drawPost(R, CY + goalR, '#3b82f6');
 
-      // Estela de esprint
       ctx.fillStyle = '#fbbf24';
       for (let i = trails.length - 1; i >= 0; i--) {
         const s = trails[i];
@@ -674,9 +838,8 @@ const CLIENT_HTML = `<!DOCTYPE html>
         if (s.life <= 0) { trails[i] = trails[trails.length - 1]; trails.pop(); continue; }
         const f = s.life / 300;
         ctx.globalAlpha = 0.45 * f;
-        ctx.beginPath(); ctx.arc(s.x, s.y, 13 * (0.55 + 0.45 * f), 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r * (0.55 + 0.45 * f), 0, TAU); ctx.fill();
       }
-      // Onda de chut
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5;
       for (let i = fx.length - 1; i >= 0; i--) {
         const s = fx[i];
@@ -688,36 +851,37 @@ const CLIENT_HTML = `<!DOCTYPE html>
       }
       ctx.globalAlpha = 1;
 
-      // Jugadores
       for (const p of rps.values()) {
         const info = roster.get(p.id);
-        if (!info) continue;
+        if (!info || info.team === 'spec') continue;
         const kicking = p.f & 1, sprinting = p.f & 2;
+        const isGiant = hasAdv(info.team, 4);
+        const rad = isGiant ? GIANT_R : PLAYER_R;
+
         if (sprinting) {
           p.ta += dt;
-          while (p.ta >= 28) { p.ta -= 28; if (trails.length < 160) trails.push({ x: p.x, y: p.y, life: 300 }); }
+          while (p.ta >= 28) { p.ta -= 28; if (trails.length < 160) trails.push({ x: p.x, y: p.y, r: rad - 2, life: 300 }); }
         } else p.ta = 0;
 
         if (p.id === myId) {
-          ctx.beginPath(); ctx.arc(p.x, p.y, 21, 0, TAU);
+          ctx.beginPath(); ctx.arc(p.x, p.y, rad + 6, 0, TAU);
           ctx.strokeStyle = sprinting ? 'rgba(251,191,36,0.75)' : 'rgba(255,255,255,0.35)';
           ctx.lineWidth = 2.5; ctx.stroke();
         }
-        ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, TAU);
+        ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, TAU);
         ctx.fillStyle = info.team === 'red' ? '#e56e56' : '#5689e5'; ctx.fill();
         ctx.lineWidth = 3;
         ctx.strokeStyle = kicking ? '#ffffff' : (sprinting ? '#fbbf24' : '#111111');
         ctx.stroke();
 
-        ctx.drawImage(info.badge, p.x - 64, p.y + 16);
+        ctx.drawImage(info.badge, p.x - 64, p.y + rad + 2);
 
         if (p.st < 100) {
-          ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(p.x - 14, p.y + 33, 28, 4);
-          ctx.fillStyle = '#fbbf24'; ctx.fillRect(p.x - 14, p.y + 33, (28 * p.st) / 100, 4);
+          ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(p.x - 14, p.y + rad + 19, 28, 4);
+          ctx.fillStyle = '#fbbf24'; ctx.fillRect(p.x - 14, p.y + rad + 19, (28 * p.st) / 100, 4);
         }
       }
 
-      // Pelota
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath(); ctx.ellipse(ball.x + 2, ball.y + 5, 9, 4, 0, 0, TAU); ctx.fill();
       ctx.beginPath(); ctx.arc(ball.x, ball.y, 10, 0, TAU);
@@ -729,7 +893,7 @@ const CLIENT_HTML = `<!DOCTYPE html>
       requestAnimationFrame(frame);
       const dt = lastTs ? Math.min(50, ts - lastTs) : 16.666;
       lastTs = ts;
-      interpolate(dt);
+      interpolate(ts, dt);
       draw(ts, dt);
     }
     requestAnimationFrame(frame);
@@ -740,7 +904,8 @@ const CLIENT_HTML = `<!DOCTYPE html>
 
 // ───────────────────────── FÍSICAS DEL SERVIDOR ─────────────────────────
 const CX = 420, CY = 210, L = 70, R = 770, T = 35, B = 385;
-const ADV_IDS = ['wide', 'power', 'stamina', 'double'];
+// 7 ventajas: 4 clásicas + 3 nuevas ('giant', 'speed', 'smallgoal')
+const ADV_IDS = ['wide', 'power', 'stamina', 'double', 'giant', 'speed', 'smallgoal'];
 const TIMES = [5, 10, 15];
 
 class Disc {
@@ -755,11 +920,16 @@ class Disc {
   }
 }
 
-const players = new Map();
-let plist = [];
+const players = new Map(); // Incluye jugadores en cancha ('red'/'blue') y espectadores ('spec')
+let allList = [];
+let plist = [];            // Solo jugadores activos en cancha ('red' o 'blue')
 let nextId = 1;
-const rebuildList = () => { plist = Array.from(players.values()); };
-const hostId = () => (plist.length ? plist[0].id : 0);
+
+function rebuildList() {
+  allList = Array.from(players.values());
+  plist = allList.filter((p) => p.team === 'red' || p.team === 'blue');
+}
+const hostId = () => (allList.length ? allList[0].id : 0);
 
 const ball = new Disc(CX, CY, 10, 1.0, TUNE.ballDamping, 0.82);
 const posts = [
@@ -799,6 +969,15 @@ function slot(team, idx) {
   return [team === 'red' ? CX - 150 : CX + 150, CY + offY];
 }
 
+function syncPlayerSizes() {
+  const a = match.adv;
+  for (let i = 0; i < allList.length; i++) {
+    const p = allList[i];
+    const isGiant = a !== null && a.id === 'giant' && a.team === p.team;
+    p.disc.radius = isGiant ? TUNE.giantRadius : TUNE.playerRadius;
+  }
+}
+
 function resetPositions() {
   epoch++;
   ball.x = CX; ball.y = CY; ball.vx = 0; ball.vy = 0;
@@ -818,10 +997,15 @@ function layoutGoals() {
 function applyGoals() {
   goals.l = goals.r = TUNE.goalHalf;
   const a = match.adv;
-  if (a && a.id === 'wide') {
-    if (a.team === 'red') goals.r = TUNE.wideGoalHalf; else goals.l = TUNE.wideGoalHalf;
+  if (a) {
+    if (a.id === 'wide') {
+      if (a.team === 'red') goals.r = TUNE.wideGoalHalf; else goals.l = TUNE.wideGoalHalf;
+    } else if (a.id === 'smallgoal') {
+      if (a.team === 'red') goals.l = TUNE.smallGoalHalf; else goals.r = TUNE.smallGoalHalf;
+    }
   }
   layoutGoals();
+  syncPlayerSizes();
 }
 
 function pickAdvantage(team) {
@@ -846,7 +1030,7 @@ function metaJSON() {
     ot: match.overtime ? 1 : 0, w: match.winner
   });
 }
-const rosterJSON = () => JSON.stringify({ type: 'ROSTER', host: hostId(), p: plist.map((p) => [p.id, p.name, p.team]) });
+const rosterJSON = () => JSON.stringify({ type: 'ROSTER', host: hostId(), p: allList.map((p) => [p.id, p.name, p.team]) });
 const sendMeta = () => broadcast(metaJSON());
 
 function resetMatchData() {
@@ -862,6 +1046,7 @@ function startMatch() { resetMatchData(); match.state = 0; sendMeta(); }
 function endMatch(winner) {
   match.state = 3; match.endTicks = TUNE.endTicks; match.winner = winner;
   match.adv = match.nextAdv = null;
+  syncPlayerSizes();
   sendMeta();
 }
 
@@ -879,6 +1064,7 @@ function goalScored(teamName) {
   match.lastScorerTeam = teamName;
   match.lastScorerName = match.lastTouch || (teamName === 'red' ? 'Rojo' : 'Azul');
   match.adv = null;
+  syncPlayerSizes();
   if (match.overtime || (cfg.mode === 1 && match.score[teamName] >= cfg.limit)) { endMatch(teamName); return; }
   match.state = 1; match.resetTicks = TUNE.celebrationTicks;
   match.nextAdv = pickAdvantage(other);
@@ -901,6 +1087,8 @@ function stepPhysics() {
 
     const moving = p.ix !== 0 || p.iy !== 0;
     const infStamina = adv !== null && adv.id === 'stamina' && adv.team === p.team;
+    const hasTurbo = adv !== null && adv.id === 'speed' && adv.team === p.team;
+
     if (p.is && moving && !p.kicking && (p.stamina > 0 || infStamina)) {
       p.sprinting = true;
       p.stamina = infStamina ? 100 : Math.max(0, p.stamina - TUNE.staminaDrain);
@@ -909,14 +1097,17 @@ function stepPhysics() {
       if (!p.is) p.stamina = Math.min(100, p.stamina + TUNE.staminaRegen);
     }
 
-    const speed = p.kicking ? TUNE.kickingSpeed : (p.sprinting ? TUNE.sprintSpeed : TUNE.walkSpeed);
+    let speed = p.kicking ? TUNE.kickingSpeed : (p.sprinting ? TUNE.sprintSpeed : TUNE.walkSpeed);
+    if (hasTurbo) speed *= TUNE.speedMult;
+
     const k = (p.ix !== 0 && p.iy !== 0) ? 0.70710678 : 1;
     d.vx = p.ix * speed * k;
     d.vy = p.iy * speed * k;
 
+    const maxKickDist = d.radius + ball.radius + 4.5;
     if (p.kicking && p.canKick) {
       const dx = ball.x - d.x, dy = ball.y - d.y, dist = Math.hypot(dx, dy);
-      if (dist <= TUNE.kickRange && dist > 0) {
+      if (dist <= maxKickDist && dist > 0) {
         const power = TUNE.kickPower * (adv !== null && adv.id === 'power' && adv.team === p.team ? TUNE.powerMult : 1);
         ball.vx += (dx / dist) * power; ball.vy += (dy / dist) * power;
         p.canKick = false; p.kicking = false; match.lastTouch = p.name;
@@ -932,8 +1123,8 @@ function stepPhysics() {
     for (let j = i + 1; j < plist.length; j++) collide(di, plist[j].disc);
     if (collide(di, ball)) match.lastTouch = plist[i].name;
     for (let q = 0; q < 4; q++) collide(di, posts[q]);
-    di.x = Math.max(15, Math.min(825, di.x));
-    di.y = Math.max(15, Math.min(405, di.y));
+    di.x = Math.max(di.radius, Math.min(840 - di.radius, di.x));
+    di.y = Math.max(di.radius, Math.min(420 - di.radius, di.y));
   }
   for (let q = 0; q < 4; q++) collide(ball, posts[q]);
 
@@ -1012,6 +1203,13 @@ function broadcast(data, droppable) {
   }
 }
 
+function chooseTeam(pref) {
+  if (pref === 'spec' || pref === 'red' || pref === 'blue') return pref;
+  let red = 0, blue = 0;
+  for (const pl of plist) pl.team === 'red' ? red++ : blue++;
+  return red <= blue ? 'red' : 'blue';
+}
+
 const r1 = (v) => Math.round(v * 10) / 10;
 function buildState() {
   let s = '{"type":"STATE","n":' + tick + ',"z":' + epoch + ',"st":' + match.state + ',"t":' + clockSeconds()
@@ -1019,8 +1217,9 @@ function buildState() {
     + ',"b":[' + r1(ball.x) + ',' + r1(ball.y) + '],"p":[';
   for (let i = 0; i < plist.length; i++) {
     const p = plist[i];
+    const ack = p.baseCt > 0 ? Math.round(p.baseCt + (tick - p.baseTick) * FIXED_DT) : 0;
     s += (i ? ',[' : '[') + p.id + ',' + r1(p.disc.x) + ',' + r1(p.disc.y) + ','
-      + ((p.kicking ? 1 : 0) | (p.sprinting ? 2 : 0)) + ',' + Math.round(p.stamina) + ']';
+      + ((p.kicking ? 1 : 0) | (p.sprinting ? 2 : 0)) + ',' + Math.round(p.stamina) + ',' + ack + ']';
   }
   return s + ']}';
 }
@@ -1036,28 +1235,49 @@ wss.on('connection', (ws, req) => {
     try {
       const m = JSON.parse(raw.toString());
       if (m.type === 'PING') {
+        if (p && typeof m.ct === 'number') { p.baseCt = m.ct; p.baseTick = tick; }
         ws.send('{"type":"PONG"}');
       } else if (m.type === 'INPUT' && p) {
         p.ix = m.x > 0 ? 1 : (m.x < 0 ? -1 : 0);
         p.iy = m.y > 0 ? 1 : (m.y < 0 ? -1 : 0);
         p.ik = m.k ? 1 : 0;
         p.is = m.s ? 1 : 0;
+        if (typeof m.ct === 'number') { p.baseCt = m.ct; p.baseTick = tick; }
       } else if (m.type === 'JOIN' && !p) {
+        const team = chooseTeam(m.team);
         let red = 0, blue = 0;
         for (const pl of plist) pl.team === 'red' ? red++ : blue++;
-        const team = (m.team === 'red' || m.team === 'blue') ? m.team : (red <= blue ? 'red' : 'blue');
-        const pos = slot(team, team === 'red' ? red : blue);
+        const pos = team === 'spec' ? [CX, CY] : slot(team, team === 'red' ? red : blue);
         p = {
           id,
           name: String(m.name || '').trim().slice(0, 14) || ('Player ' + id),
           team,
-          disc: new Disc(pos[0], pos[1], 15, 0.5, 1.0, 0.5),
+          disc: new Disc(pos[0], pos[1], TUNE.playerRadius, 0.5, 1.0, 0.5),
           ix: 0, iy: 0, ik: 0, is: 0,
-          canKick: true, kicking: false, sprinting: false, stamina: 100
+          canKick: true, kicking: false, sprinting: false, stamina: 100,
+          baseCt: 0, baseTick: tick
         };
-        players.set(id, p); rebuildList();
+        players.set(id, p); rebuildList(); syncPlayerSizes();
         ws.send(JSON.stringify({ type: 'JOINED', playerId: id, team }));
         broadcast(rosterJSON());
+      } else if (m.type === 'TEAM' && p) {
+        const newTeam = chooseTeam(m.team);
+        if (newTeam !== p.team) {
+          p.team = newTeam;
+          p.ix = 0; p.iy = 0; p.ik = 0; p.is = 0;
+          p.disc.vx = 0; p.disc.vy = 0;
+          if (newTeam !== 'spec') {
+            let count = 0;
+            for (const pl of plist) if (pl.id !== p.id && pl.team === newTeam) count++;
+            const pos = slot(newTeam, count);
+            p.disc.x = pos[0]; p.disc.y = pos[1];
+            p.stamina = 100;
+          }
+          rebuildList(); syncPlayerSizes();
+          epoch++;
+          ws.send(JSON.stringify({ type: 'JOINED', playerId: id, team: newTeam }));
+          broadcast(rosterJSON());
+        }
       } else if (m.type === 'CONFIG' && p && id === hostId() && match.state === 2) {
         if (Number.isInteger(m.map) && m.map >= 0 && m.map <= 2) cfg.map = m.map;
         const mode = m.mode === 1 ? 1 : 0;
@@ -1076,11 +1296,10 @@ wss.on('connection', (ws, req) => {
     if (!p) return;
     players.delete(id); rebuildList();
     broadcast(rosterJSON());
-    if (!plist.length) toSetup();
+    if (!allList.length) toSetup();
   });
 });
 
-// Reloj de servidor de alta precisión: emite cada tick exactamente a 16.666 ms sin saltarse pasos
 let nextTickTime = performance.now();
 setInterval(() => {
   const now = performance.now();
